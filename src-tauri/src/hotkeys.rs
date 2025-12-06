@@ -43,6 +43,7 @@ impl HotkeyManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn unregister_all(&self) -> Result<()> {
         let hotkeys: Vec<HotKey> = self.registered.read().values().copied().collect();
         for hotkey in hotkeys {

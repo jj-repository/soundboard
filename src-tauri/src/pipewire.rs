@@ -228,6 +228,7 @@ impl PipeWireManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn route_app_to_sink(&self, app_name: &str) -> Result<()> {
         // Find the application's sink input and move it to Soundboard_Mix
         // This is called after the app starts playing audio

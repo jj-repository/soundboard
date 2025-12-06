@@ -80,6 +80,7 @@ impl AudioManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_master_volume(&self) -> f32 {
         *self.master_volume.read()
     }
