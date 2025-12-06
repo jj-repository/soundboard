@@ -248,30 +248,35 @@ pub fn run() {
             });
 
             // Setup hotkey listener in background
-            let app_handle = app.handle().clone();
-            let sound_manager_clone = sound_manager.clone();
-            let audio_manager_clone = audio_manager.clone();
+            // Note: Global hotkeys are currently only supported on Linux due to thread safety issues
+            // with the Windows implementation in the global-hotkey crate
+            #[cfg(target_os = "linux")]
+            {
+                let app_handle = app.handle().clone();
+                let sound_manager_clone = sound_manager.clone();
+                let audio_manager_clone = audio_manager.clone();
 
-            std::thread::spawn(move || {
-                let receiver = HotkeyManager::get_receiver().expect("Failed to get hotkey receiver");
-                loop {
-                    if receiver.recv().is_ok() {
-                        // Find sound by hotkey and play it
-                        if let Some(sound) = sound_manager_clone.get_all_sounds().iter().find(|s| {
-                            s.hotkey.is_some() // Match the hotkey ID with the event
-                        }) {
-                            let _ = audio_manager_clone.play_sound(
-                                sound.id.clone(),
-                                sound.path.clone(),
-                                sound.volume,
-                            );
+                std::thread::spawn(move || {
+                    let receiver = HotkeyManager::get_receiver().expect("Failed to get hotkey receiver");
+                    loop {
+                        if receiver.recv().is_ok() {
+                            // Find sound by hotkey and play it
+                            if let Some(sound) = sound_manager_clone.get_all_sounds().iter().find(|s| {
+                                s.hotkey.is_some() // Match the hotkey ID with the event
+                            }) {
+                                let _ = audio_manager_clone.play_sound(
+                                    sound.id.clone(),
+                                    sound.path.clone(),
+                                    sound.volume,
+                                );
 
-                            // Emit event to frontend
-                            let _ = app_handle.emit("sound-played", sound.id.clone());
+                                // Emit event to frontend
+                                let _ = app_handle.emit("sound-played", sound.id.clone());
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
 
             Ok(())
         })
