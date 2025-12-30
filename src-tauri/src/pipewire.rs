@@ -41,6 +41,7 @@ impl PipeWireManager {
 
         // Step 2: Create a virtual source from the sink's monitor
         // This is what Discord will see as a microphone
+        // CRITICAL: media.class=Audio/Source is required for Discord/apps to detect it
         let monitor_source = format!("{}.monitor", self.sink_name);
         let output = Command::new("pactl")
             .args([
@@ -48,7 +49,7 @@ impl PipeWireManager {
                 "module-remap-source",
                 &format!("source_name={}", self.virtual_mic_name),
                 &format!("master={}", monitor_source),
-                "source_properties=device.description=\"Soundboard Virtual Microphone\"",
+                "source_properties=device.description=\"Soundboard Virtual Microphone\" media.class=Audio/Source",
             ])
             .output()
             .context("Failed to create virtual microphone")?;
@@ -230,11 +231,11 @@ impl PipeWireManager {
 
 
     pub fn route_all_app_audio_to_sink(&self) -> Result<()> {
-        // Move all current tauri-app sink inputs to Soundboard_Mix
+        // Move all current soundboard/tauri-app sink inputs to Soundboard_Mix
         // This handles the case where audio is already playing
         let output = Command::new("sh")
             .arg("-c")
-            .arg("pactl list sink-inputs short | grep -i tauri | awk '{print $1}'")
+            .arg("pactl list sink-inputs | awk '/^Sink Input #/{id=$3} /application.name.*(soundboard|tauri-app)/{print id}' | sort -u | sed 's/#//'")
             .output()
             .context("Failed to list sink inputs")?;
 

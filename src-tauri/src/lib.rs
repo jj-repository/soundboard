@@ -139,16 +139,18 @@ async fn setup_virtual_microphone(state: State<'_, AppState>) -> Result<String, 
     pw.setup_virtual_microphone()
         .map_err(|e| e.to_string())?;
 
-    // Route the soundboard app's audio to Soundboard_Mix
-    // This keeps the user's default audio output unchanged (so they can hear Discord/games/music)
+    // Immediately route any existing tauri-app audio to Soundboard_Mix
     pw.route_all_app_audio_to_sink()
         .map_err(|e| e.to_string())?;
 
+    drop(pw);
+
     // Start a background thread to continuously route new audio streams
+    // This is needed because CPAL creates new sink inputs as sounds play
     let pw_manager = state.pipewire_manager.clone();
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            std::thread::sleep(std::time::Duration::from_millis(500));
             let pw = pw_manager.lock();
             let _ = pw.route_all_app_audio_to_sink();
         }

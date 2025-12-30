@@ -16,6 +16,7 @@ pub struct AudioManager {
 
 impl AudioManager {
     pub fn new() -> Result<Self> {
+        // Always use default device - we'll route to Soundboard_Mix using pactl
         let (_stream, stream_handle) = OutputStream::try_default()
             .context("Failed to create audio output stream")?;
 
