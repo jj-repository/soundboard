@@ -1,5 +1,8 @@
 # Soundboard
 
+[![Build](https://github.com/jj-repository/soundboard/actions/workflows/build.yml/badge.svg)](https://github.com/jj-repository/soundboard/actions/workflows/build.yml)
+[![Release](https://github.com/jj-repository/soundboard/actions/workflows/release.yml/badge.svg)](https://github.com/jj-repository/soundboard/actions/workflows/release.yml)
+
 A powerful Linux soundboard application with virtual microphone support for Discord, games, and VoIP applications. Built with Tauri, Rust, and React.
 
 ## Features
