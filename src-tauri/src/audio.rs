@@ -58,7 +58,10 @@ impl AudioManager {
     }
 
     pub fn stop_sound(&self) -> Result<()> {
-        // Individual sound stopping is not supported - use stop_all instead
+        // Individual sound stopping is not implemented in rodio for overlapping sounds.
+        // Each sound plays independently in its own sink and tracking individual sinks
+        // by ID would require significant changes to the architecture.
+        // Use stop_all() to stop all sounds at once.
         Ok(())
     }
 

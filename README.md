@@ -17,6 +17,12 @@ A powerful Linux soundboard application with virtual microphone support for Disc
 - **Clean UI**: Modern, responsive interface built with React and TypeScript
 - **PipeWire Integration**: Advanced audio routing using PipeWire/PulseAudio
 
+## Known Limitations
+
+- **Individual Sound Stop**: Stopping individual sounds is not currently supported. Use "Stop All" to stop all playing sounds at once.
+- **Windows Hotkeys**: Global hotkeys are currently only available on Linux due to thread safety issues with the Windows implementation.
+- **Sound Persistence**: Sound lists are not saved between sessions - you need to reload your folder each launch.
+
 ## Requirements
 
 - **OS**: Linux (tested on systems with PipeWire/PulseAudio)
