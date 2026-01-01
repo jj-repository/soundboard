@@ -1,7 +1,7 @@
 {
   "name": "soundboard",
   "private": false,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "A powerful Linux soundboard application with virtual microphone support for Discord, games, and VoIP applications",
   "author": "Soundboard Contributors",
   "license": "MIT",
