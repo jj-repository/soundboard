@@ -56,7 +56,7 @@ npm run tauri build
 npm run tauri dev
 
 # Or run the built binary
-./src-tauri/target/debug/tauri-app
+./src-tauri/target/debug/soundboard
 ```
 
 ### Binary Installation

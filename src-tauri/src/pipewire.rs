@@ -229,7 +229,6 @@ impl PipeWireManager {
         Ok(())
     }
 
-
     pub fn route_all_app_audio_to_sink(&self) -> Result<()> {
         // Move all current soundboard/tauri-app sink inputs to Soundboard_Mix
         // This handles the case where audio is already playing

@@ -43,9 +43,12 @@ impl HotkeyManager {
         Ok(())
     }
 
-
     pub fn get_receiver() -> Result<crossbeam_channel::Receiver<GlobalHotKeyEvent>> {
         Ok(GlobalHotKeyEvent::receiver().clone())
+    }
+
+    pub fn get_registered_hotkeys(&self) -> HashMap<String, HotKey> {
+        self.registered.read().clone()
     }
 }
 

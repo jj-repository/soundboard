@@ -92,17 +92,17 @@ async fn play_sound(id: String, state: State<'_, AppState>) -> Result<(), String
     if let Some(sound) = state.sound_manager.get_sound(&id) {
         state
             .audio_manager
-            .play_sound(id, sound.path, sound.volume)
+            .play_sound(sound.path, sound.volume)
             .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn stop_sound(id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn stop_sound(_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .audio_manager
-        .stop_sound(&id)
+        .stop_sound()
         .map_err(|e| e.to_string())
 }
 
@@ -268,23 +268,31 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 let sound_manager_clone = sound_manager.clone();
                 let audio_manager_clone = audio_manager.clone();
+                let hotkey_manager_clone = hotkey_manager.clone();
 
                 std::thread::spawn(move || {
                     let receiver = HotkeyManager::get_receiver().expect("Failed to get hotkey receiver");
                     loop {
-                        if receiver.recv().is_ok() {
-                            // Find sound by hotkey and play it
-                            if let Some(sound) = sound_manager_clone.get_all_sounds().iter().find(|s| {
-                                s.hotkey.is_some() // Match the hotkey ID with the event
+                        if let Ok(event) = receiver.recv() {
+                            // Find the sound ID that matches this hotkey event
+                            let registered = hotkey_manager_clone.lock().get_registered_hotkeys();
+                            if let Some(sound_id) = registered.iter().find_map(|(id, hotkey)| {
+                                if hotkey.id() == event.id {
+                                    Some(id.clone())
+                                } else {
+                                    None
+                                }
                             }) {
-                                let _ = audio_manager_clone.play_sound(
-                                    sound.id.clone(),
-                                    sound.path.clone(),
-                                    sound.volume,
-                                );
+                                // Find the sound and play it
+                                if let Some(sound) = sound_manager_clone.get_sound(&sound_id) {
+                                    let _ = audio_manager_clone.play_sound(
+                                        sound.path.clone(),
+                                        sound.volume,
+                                    );
 
-                                // Emit event to frontend
-                                let _ = app_handle.emit("sound-played", sound.id.clone());
+                                    // Emit event to frontend
+                                    let _ = app_handle.emit("sound-played", sound.id.clone());
+                                }
                             }
                         }
                     }

@@ -136,5 +136,4 @@ impl SoundManager {
     pub fn set_system_audio_routing(&self, enabled: bool) {
         self.state.write().system_audio_routing_enabled = enabled;
     }
-
 }

@@ -8,8 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct AudioManager {
-    stream_handle: Arc<RwLock<OutputStreamHandle>>,
-    _stream: Arc<RwLock<Option<OutputStream>>>,
+    stream_handle: OutputStreamHandle,
     active_sounds: Arc<RwLock<Vec<Arc<Sink>>>>,
     master_volume: Arc<RwLock<f32>>,
 }
@@ -17,25 +16,28 @@ pub struct AudioManager {
 impl AudioManager {
     pub fn new() -> Result<Self> {
         // Always use default device - we'll route to Soundboard_Mix using pactl
-        let (_stream, stream_handle) = OutputStream::try_default()
+        let (stream, stream_handle) = OutputStream::try_default()
             .context("Failed to create audio output stream")?;
 
+        // Leak the OutputStream to keep it alive for the entire application lifetime.
+        // This is safe because the audio stream should remain active until the app exits.
+        // OutputStream is not Send/Sync, but we only need the handle which is.
+        std::mem::forget(stream);
+
         Ok(Self {
-            stream_handle: Arc::new(RwLock::new(stream_handle)),
-            _stream: Arc::new(RwLock::new(Some(_stream))),
+            stream_handle,
             active_sounds: Arc::new(RwLock::new(Vec::new())),
             master_volume: Arc::new(RwLock::new(1.0)),
         })
     }
 
-    pub fn play_sound(&self, _id: String, path: PathBuf, volume: f32) -> Result<()> {
+    pub fn play_sound(&self, path: PathBuf, volume: f32) -> Result<()> {
         let file = File::open(&path)
             .context(format!("Failed to open audio file: {:?}", path))?;
         let source = Decoder::new(BufReader::new(file))
             .context("Failed to decode audio file")?;
 
-        let stream_handle = self.stream_handle.read();
-        let sink = Sink::try_new(&stream_handle)
+        let sink = Sink::try_new(&self.stream_handle)
             .context("Failed to create audio sink")?;
 
         let master_vol = *self.master_volume.read();
@@ -55,9 +57,8 @@ impl AudioManager {
         Ok(())
     }
 
-    pub fn stop_sound(&self, _id: &str) -> Result<()> {
-        // Since we don't track by ID anymore, we can't stop individual sounds
-        // But we keep this function for API compatibility
+    pub fn stop_sound(&self) -> Result<()> {
+        // Individual sound stopping is not supported - use stop_all instead
         Ok(())
     }
 
@@ -81,7 +82,6 @@ impl AudioManager {
         Ok(())
     }
 
-
     pub fn list_output_devices(&self) -> Result<Vec<String>> {
         let host = cpal::default_host();
         let devices: Vec<String> = host
@@ -91,6 +91,3 @@ impl AudioManager {
         Ok(devices)
     }
 }
-
-unsafe impl Send for AudioManager {}
-unsafe impl Sync for AudioManager {}
