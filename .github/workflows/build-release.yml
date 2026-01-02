@@ -89,13 +89,13 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Download Linux artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         name: linux-executable
         path: dist/linux
 
     - name: Download Windows artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         name: windows-executable
         path: dist/windows
