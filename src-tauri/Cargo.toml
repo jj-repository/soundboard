@@ -29,7 +29,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rodio = { version = "0.19", features = ["symphonia-all"] }
+rodio = { version = "0.21", features = ["symphonia-all"] }
 cpal = "0.15"
 tokio = { version = "1", features = ["full"] }
 global-hotkey = "0.6"
