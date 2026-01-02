@@ -1,0 +1,66 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6am UTC
+
+jobs:
+  analyze-javascript:
+    name: Analyze JavaScript/TypeScript
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: javascript-typescript
+
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:javascript-typescript"
+
+  analyze-rust:
+    name: Analyze Rust (Security Audit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run Clippy security audit
+      working-directory: src-tauri
+      run: |
+        rustup component add clippy
+        cargo clippy -- -D warnings -W clippy::all 2>&1 | tee clippy-results.txt || true
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run cargo audit
+      working-directory: src-tauri
+      run: cargo audit --json > audit-results.json || true
+
+    - name: Upload audit results
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-security-audit
+        path: |
+          src-tauri/clippy-results.txt
+          src-tauri/audit-results.json
