@@ -1,6 +1,7 @@
 use ksni::{Icon, MenuItem, Tray};
-use ksni::blocking::{Handle, TrayMethods};
+use ksni::blocking::TrayMethods;
 use std::sync::mpsc;
+use std::thread;
 
 const ICON_DATA: &[u8] = include_bytes!("../../assets/icon.png");
 
@@ -80,22 +81,33 @@ impl Tray for PwspTray {
 
 pub struct TrayHandle {
     pub receiver: mpsc::Receiver<TrayMessage>,
-    _handle: Handle<PwspTray>,
+    _thread: thread::JoinHandle<()>,
 }
 
 pub fn start_tray() -> Option<TrayHandle> {
     let (sender, receiver) = mpsc::channel();
 
-    let tray = PwspTray { sender };
-
-    match tray.spawn() {
-        Ok(handle) => Some(TrayHandle {
-            receiver,
-            _handle: handle,
-        }),
-        Err(e) => {
-            eprintln!("Failed to create system tray: {}", e);
-            None
+    // Spawn the tray in a separate thread with its own tokio runtime
+    // to avoid conflicts with eframe's async context
+    let thread_handle = thread::spawn(move || {
+        let tray = PwspTray { sender };
+        match tray.spawn() {
+            Ok(handle) => {
+                // Keep the handle alive - this blocks until the tray is closed
+                std::mem::forget(handle);
+                // Sleep forever to keep the thread alive
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(3600));
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to create system tray: {}", e);
+            }
         }
-    }
+    });
+
+    Some(TrayHandle {
+        receiver,
+        _thread: thread_handle,
+    })
 }
