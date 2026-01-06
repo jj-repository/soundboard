@@ -322,18 +322,6 @@ impl SoundpadGui {
         guard.state = PlayerState::Stopped;
     }
 
-    pub fn play_on_layer(&mut self, layer_index: usize, path: &PathBuf) {
-        if let Some(path_str) = path.to_str() {
-            if let Err(e) = make_request_sync(Request::play_on_layer(layer_index, path_str)) {
-                eprintln!("Failed to play on layer {}: {}", layer_index, e);
-            }
-            // Apply per-sound volume to the layer if set
-            if let Some(sound_volume) = self.get_sound_volume(path) {
-                make_request_sync(Request::set_layer_volume(layer_index, sound_volume)).ok();
-            }
-        }
-    }
-
     pub fn stop_layer(&mut self, layer_index: usize) {
         if let Err(e) = make_request_sync(Request::stop_layer(layer_index)) {
             eprintln!("Failed to stop layer {}: {}", layer_index, e);
@@ -347,10 +335,19 @@ impl SoundpadGui {
     }
 
     pub fn toggle_favorite(&mut self, path: &PathBuf) {
-        if self.config.favorites.contains(path) {
+        let was_favorite = self.config.favorites.contains(path);
+        if was_favorite {
             self.config.favorites.remove(path);
+            // If viewing Favourites playlist, remove from display
+            if self.app_state.current_playlist.as_deref() == Some("Favourites") {
+                self.app_state.files.remove(path);
+            }
         } else {
             self.config.favorites.insert(path.clone());
+            // If viewing Favourites playlist, add to display
+            if self.app_state.current_playlist.as_deref() == Some("Favourites") && path.exists() {
+                self.app_state.files.insert(path.clone());
+            }
         }
         self.config.save_to_file().ok();
     }
@@ -375,7 +372,7 @@ impl SoundpadGui {
 
     // ============= Playlist Methods =============
 
-    /// Open a playlist (either "All Sounds" or a user-created playlist)
+    /// Open a playlist (either "All Sounds", "Favourites", or a user-created playlist)
     pub fn open_playlist(&mut self, name: &str) {
         self.app_state.current_playlist = Some(name.to_string());
         self.app_state.current_category = None;
@@ -384,6 +381,14 @@ impl SoundpadGui {
         if name == "All Sounds" {
             // Load all files from sounds folder
             self.load_all_sounds();
+        } else if name == "Favourites" {
+            // Load all favorited files
+            self.app_state.files.clear();
+            for path in &self.config.favorites.clone() {
+                if path.exists() {
+                    self.app_state.files.insert(path.clone());
+                }
+            }
         } else {
             // Load files from the playlist
             self.app_state.files.clear();

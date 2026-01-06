@@ -131,31 +131,44 @@ pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
 }
 
 pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + Send + Sync>> {
+    use tokio::time::{timeout, Duration};
+
     let socket_path = get_runtime_dir().join("daemon.sock");
-    let mut stream = UnixStream::connect(socket_path).await?;
+
+    // Add timeout for connection to prevent GUI freeze
+    let mut stream = timeout(Duration::from_secs(2), UnixStream::connect(socket_path))
+        .await
+        .map_err(|_| "Connection timeout")??;
 
     // ---------- Send request (start) ----------
     let request_data = serde_json::to_vec(&request)?;
     let request_len = request_data.len() as u32;
-    if stream.write_all(&request_len.to_le_bytes()).await.is_err() {
-        return Err("Failed to send request length".into());
-    };
-    if stream.write_all(&request_data).await.is_err() {
-        return Err("Failed to send request".into());
-    }
+
+    timeout(Duration::from_secs(2), stream.write_all(&request_len.to_le_bytes()))
+        .await
+        .map_err(|_| "Send timeout")?
+        .map_err(|_| "Failed to send request length")?;
+
+    timeout(Duration::from_secs(2), stream.write_all(&request_data))
+        .await
+        .map_err(|_| "Send timeout")?
+        .map_err(|_| "Failed to send request")?;
     // ---------- Send request (end) ----------
 
     // ---------- Read response (start) ----------
     let mut len_bytes = [0u8; 4];
-    if stream.read_exact(&mut len_bytes).await.is_err() {
-        return Err("Failed to read response length".into());
-    }
+    timeout(Duration::from_secs(5), stream.read_exact(&mut len_bytes))
+        .await
+        .map_err(|_| "Read timeout")?
+        .map_err(|_| "Failed to read response length")?;
+
     let response_len = u32::from_le_bytes(len_bytes) as usize;
 
     let mut buffer = vec![0u8; response_len];
-    if stream.read_exact(&mut buffer).await.is_err() {
-        return Err("Failed to read response".into());
-    };
+    timeout(Duration::from_secs(5), stream.read_exact(&mut buffer))
+        .await
+        .map_err(|_| "Read timeout")?
+        .map_err(|_| "Failed to read response")?;
     // ---------- Read response (end) ----------
 
     Ok(serde_json::from_slice(&buffer)?)

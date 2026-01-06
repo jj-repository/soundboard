@@ -697,6 +697,18 @@ impl SoundpadGui {
                     self.open_playlist("All Sounds");
                 }
 
+                // "Favourites" - special virtual playlist showing favorited sounds
+                let is_favourites_selected = self.app_state.current_playlist.as_deref() == Some("Favourites");
+                let mut favourites_text = RichText::new(format!("{} Favourites", icons::ICON_STAR));
+                if is_favourites_selected {
+                    favourites_text = favourites_text.color(Color32::GOLD);
+                }
+
+                let favourites_button = Button::new(favourites_text.atom_max_width(area_size.x - 36.0)).frame(false);
+                if ui.add(favourites_button).clicked() {
+                    self.open_playlist("Favourites");
+                }
+
                 ui.add_space(4.0);
 
                 // User-created playlists
@@ -1209,44 +1221,6 @@ impl SoundpadGui {
                 }
             }
 
-            // Edit metadata button
-            if !in_favorites_section {
-                let edit_button =
-                    Button::new(RichText::new(icons::ICON_LABEL).size(14.0))
-                        .frame(false);
-                let edit_response = ui.add_sized([18.0, 18.0], edit_button);
-                if edit_response.clicked() {
-                    self.app_state.editing_metadata_file = Some(entry_path.clone());
-                    self.app_state.tag_input.clear();
-                }
-                if edit_response.hovered() {
-                    edit_response.on_hover_text("Edit tags & metadata");
-                }
-            }
-
-            // Play on layer button
-            if !in_favorites_section {
-                let layer_button =
-                    Button::new(RichText::new(icons::ICON_LAYERS).size(14.0))
-                        .frame(false);
-                let layer_response = ui.add_sized([18.0, 18.0], layer_button);
-
-                layer_response.context_menu(|ui| {
-                    ui.label(RichText::new("Play on layer:").weak().size(11.0));
-                    ui.separator();
-                    for i in 0..4 {
-                        if ui.button(format!("Layer {}", i + 1)).clicked() {
-                            self.play_on_layer(i, entry_path);
-                            ui.close();
-                        }
-                    }
-                });
-
-                if layer_response.hovered() {
-                    layer_response.on_hover_text("Play on layer (right-click)");
-                }
-            }
-
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(&display_name);
             if let Some(current_file) = &self.app_state.selected_file {
@@ -1331,27 +1305,6 @@ impl SoundpadGui {
                 remove_response.on_hover_text("Remove from category");
             }
 
-            // Play on layer button
-            let layer_button =
-                Button::new(RichText::new(icons::ICON_LAYERS).size(14.0))
-                    .frame(false);
-            let layer_response = ui.add_sized([18.0, 18.0], layer_button);
-
-            layer_response.context_menu(|ui| {
-                ui.label(RichText::new("Play on layer:").weak().size(11.0));
-                ui.separator();
-                for i in 0..4 {
-                    if ui.button(format!("Layer {}", i + 1)).clicked() {
-                        self.play_on_layer(i, entry_path);
-                        ui.close();
-                    }
-                }
-            });
-
-            if layer_response.hovered() {
-                layer_response.on_hover_text("Play on layer (right-click)");
-            }
-
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(file_name.to_string());
             if let Some(current_file) = &self.app_state.selected_file {
@@ -1376,6 +1329,7 @@ impl SoundpadGui {
 
     fn draw_playlist_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str) {
         let is_all_sounds = playlist_name == "All Sounds";
+        let is_favourites = playlist_name == "Favourites";
 
         // Get display name (custom name or filename)
         let display_name = self.config.sound_metadata.get(entry_path)
@@ -1447,40 +1401,6 @@ impl SoundpadGui {
                 }
             }
 
-            // Edit metadata button
-            let edit_button =
-                Button::new(RichText::new(icons::ICON_LABEL).size(14.0))
-                    .frame(false);
-            let edit_response = ui.add_sized([18.0, 18.0], edit_button);
-            if edit_response.clicked() {
-                self.app_state.editing_metadata_file = Some(entry_path.clone());
-                self.app_state.tag_input.clear();
-            }
-            if edit_response.hovered() {
-                edit_response.on_hover_text("Edit tags & metadata");
-            }
-
-            // Play on layer button
-            let layer_button =
-                Button::new(RichText::new(icons::ICON_LAYERS).size(14.0))
-                    .frame(false);
-            let layer_response = ui.add_sized([18.0, 18.0], layer_button);
-
-            layer_response.context_menu(|ui| {
-                ui.label(RichText::new("Play on layer:").weak().size(11.0));
-                ui.separator();
-                for i in 0..4 {
-                    if ui.button(format!("Layer {}", i + 1)).clicked() {
-                        self.play_on_layer(i, entry_path);
-                        ui.close();
-                    }
-                }
-            });
-
-            if layer_response.hovered() {
-                layer_response.on_hover_text("Play on layer (right-click)");
-            }
-
             // Individual volume slider
             let current_volume = self.get_sound_volume(entry_path).unwrap_or(1.0);
             let has_custom_volume = self.get_sound_volume(entry_path).is_some();
@@ -1505,20 +1425,22 @@ impl SoundpadGui {
                 "Volume: using global (drag slider to set)".to_string()
             });
 
-            // Compact volume slider
+            // Compact volume slider - only save when drag stops to avoid excessive I/O
             let mut vol = current_volume;
             let slider = Slider::new(&mut vol, 0.0..=1.0)
                 .show_value(false)
                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
             let slider_response = ui.add_sized([60.0, 14.0], slider);
 
-            if slider_response.changed() {
+            if slider_response.drag_stopped() {
                 self.set_sound_volume(&entry_path.clone(), Some(vol));
             }
 
             // Remove/Delete button
             let (remove_icon, remove_color, remove_tooltip) = if is_all_sounds {
                 (icons::ICON_DELETE, Color32::LIGHT_RED, "Delete from sounds folder")
+            } else if is_favourites {
+                (icons::ICON_STAR_BORDER, Color32::LIGHT_RED, "Remove from favorites")
             } else {
                 (icons::ICON_REMOVE_CIRCLE_OUTLINE, Color32::LIGHT_RED, "Remove from playlist")
             };
@@ -1527,7 +1449,12 @@ impl SoundpadGui {
                     .frame(false);
             let remove_response = ui.add_sized([18.0, 18.0], remove_button);
             if remove_response.clicked() {
-                self.remove_from_playlist(playlist_name, entry_path);
+                if is_favourites {
+                    // Remove from favorites and refresh view
+                    self.toggle_favorite(&entry_path.clone());
+                } else {
+                    self.remove_from_playlist(playlist_name, entry_path);
+                }
             }
             if remove_response.hovered() {
                 remove_response.on_hover_text(remove_tooltip);
@@ -1577,7 +1504,7 @@ impl SoundpadGui {
 
             let mut selected_input = self.audio_player_state.current_input.to_owned();
             let prev_input = selected_input.to_owned();
-            ComboBox::from_label("Choose microphone")
+            ComboBox::from_label("Select your mic")
                 .selected_text(
                     self.audio_player_state
                         .all_inputs
@@ -1598,7 +1525,7 @@ impl SoundpadGui {
             ui.add_space(10.0);
 
             // ---------- Mic Gain ----------
-            ui.label(RichText::new("Mic:").monospace().size(12.0));
+            ui.label(RichText::new("Mic Gain:").monospace().size(12.0));
             let mic_gain_slider = Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
                 .show_value(false)
                 .step_by(0.1);
