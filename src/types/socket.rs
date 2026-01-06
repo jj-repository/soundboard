@@ -44,6 +44,10 @@ impl Request {
         Request::new("play", vec![("file_path", file_path)])
     }
 
+    pub fn preview(file_path: &str) -> Self {
+        Request::new("preview", vec![("file_path", file_path)])
+    }
+
     pub fn get_is_paused() -> Self {
         Request::new("is_paused", vec![])
     }
@@ -78,6 +82,22 @@ impl Request {
 
     pub fn set_volume(volume: f32) -> Self {
         Request::new("set_volume", vec![("volume", &volume.to_string())])
+    }
+
+    pub fn get_gain() -> Self {
+        Request::new("get_gain", vec![])
+    }
+
+    pub fn set_gain(gain: f32) -> Self {
+        Request::new("set_gain", vec![("gain", &gain.to_string())])
+    }
+
+    pub fn get_mic_gain() -> Self {
+        Request::new("get_mic_gain", vec![])
+    }
+
+    pub fn set_mic_gain(mic_gain: f32) -> Self {
+        Request::new("set_mic_gain", vec![("mic_gain", &mic_gain.to_string())])
     }
 
     pub fn seek(position: f32) -> Self {

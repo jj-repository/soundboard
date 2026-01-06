@@ -30,6 +30,18 @@ pub struct SetVolumeCommand {
     pub volume: Option<f32>,
 }
 
+pub struct GetGainCommand {}
+
+pub struct SetGainCommand {
+    pub gain: Option<f32>,
+}
+
+pub struct GetMicGainCommand {}
+
+pub struct SetMicGainCommand {
+    pub mic_gain: Option<f32>,
+}
+
 pub struct GetPositionCommand {}
 
 pub struct SeekCommand {
@@ -39,6 +51,10 @@ pub struct SeekCommand {
 pub struct GetDurationCommand {}
 
 pub struct PlayCommand {
+    pub file_path: Option<PathBuf>,
+}
+
+pub struct PreviewCommand {
     pub file_path: Option<PathBuf>,
 }
 
@@ -154,6 +170,50 @@ impl Executable for SetVolumeCommand {
 }
 
 #[async_trait]
+impl Executable for GetGainCommand {
+    async fn execute(&self) -> Response {
+        let audio_player = get_audio_player().await.lock().await;
+        let gain = audio_player.get_gain();
+        Response::new(true, gain.to_string())
+    }
+}
+
+#[async_trait]
+impl Executable for SetGainCommand {
+    async fn execute(&self) -> Response {
+        if let Some(gain) = self.gain {
+            let mut audio_player = get_audio_player().await.lock().await;
+            audio_player.set_gain(gain);
+            Response::new(true, format!("Audio gain was set to {}", gain))
+        } else {
+            Response::new(false, "Invalid gain value")
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for GetMicGainCommand {
+    async fn execute(&self) -> Response {
+        let audio_player = get_audio_player().await.lock().await;
+        let mic_gain = audio_player.get_mic_gain();
+        Response::new(true, mic_gain.to_string())
+    }
+}
+
+#[async_trait]
+impl Executable for SetMicGainCommand {
+    async fn execute(&self) -> Response {
+        if let Some(mic_gain) = self.mic_gain {
+            let mut audio_player = get_audio_player().await.lock().await;
+            audio_player.set_mic_gain(mic_gain);
+            Response::new(true, format!("Mic gain was set to {}", mic_gain))
+        } else {
+            Response::new(false, "Invalid mic gain value")
+        }
+    }
+}
+
+#[async_trait]
 impl Executable for GetPositionCommand {
     async fn execute(&self) -> Response {
         let audio_player = get_audio_player().await.lock().await;
@@ -195,6 +255,21 @@ impl Executable for PlayCommand {
             let mut audio_player = get_audio_player().await.lock().await;
             match audio_player.play(file_path).await {
                 Ok(_) => Response::new(true, format!("Now playing {}", file_path.display())),
+                Err(err) => Response::new(false, err.to_string()),
+            }
+        } else {
+            Response::new(false, "Invalid file path")
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for PreviewCommand {
+    async fn execute(&self) -> Response {
+        if let Some(file_path) = &self.file_path {
+            let mut audio_player = get_audio_player().await.lock().await;
+            match audio_player.preview(file_path) {
+                Ok(_) => Response::new(true, format!("Previewing {}", file_path.display())),
                 Err(err) => Response::new(false, err.to_string()),
             }
         } else {

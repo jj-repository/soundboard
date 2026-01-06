@@ -1,16 +1,14 @@
 use crate::gui::SoundpadGui;
 use egui::{Context, Key};
 
-use std::path::PathBuf;
-
 impl SoundpadGui {
     pub fn handle_input(&mut self, ctx: &Context) {
-        if ctx.memory(|reader| { reader.focused() }.is_some()) {
+        if ctx.memory(|reader| reader.focused().is_some()) {
             return;
         }
 
         ctx.input(|i| {
-            // Close app on espace
+            // Close app on escape
             if i.key_pressed(Key::Escape) {
                 std::process::exit(0);
             }
@@ -20,8 +18,10 @@ impl SoundpadGui {
                 self.app_state.show_settings = !self.app_state.show_settings;
             }
 
-            if i.key_pressed(Key::Enter) && self.app_state.selected_file.is_some() {
-                self.play_file(&self.app_state.selected_file.clone().unwrap());
+            if i.key_pressed(Key::Enter) {
+                if let Some(selected_file) = self.app_state.selected_file.clone() {
+                    self.play_file(&selected_file);
+                }
             }
 
             if !self.app_state.show_settings {
@@ -31,77 +31,63 @@ impl SoundpadGui {
                 }
 
                 // Focus search field
-                if i.key_pressed(Key::Slash) && self.app_state.search_field_id.is_some() {
+                if i.key_pressed(Key::Slash) {
                     self.app_state.force_focus_id = self.app_state.search_field_id;
                 }
 
-                // Iterate through dirs if there are some
+                // Navigate through dirs/files with Ctrl+Arrow keys
                 if i.modifiers.ctrl {
-                    let arrow_up_pressed = i.key_pressed(Key::ArrowUp);
-                    let arrow_down_pressed = i.key_pressed(Key::ArrowDown);
+                    let arrow_up = i.key_pressed(Key::ArrowUp);
+                    let arrow_down = i.key_pressed(Key::ArrowDown);
 
-                    if arrow_up_pressed || arrow_down_pressed {
+                    if arrow_up || arrow_down {
+                        let delta = if arrow_down { 1isize } else { -1 };
+
                         if i.modifiers.shift && !self.app_state.dirs.is_empty() {
-                            let mut dirs: Vec<PathBuf> =
-                                self.app_state.dirs.iter().cloned().collect();
+                            // Navigate directories
+                            let mut dirs: Vec<_> = self.app_state.dirs.iter().cloned().collect();
                             dirs.sort();
 
-                            let current_dir_index: i8;
-                            if let Some(current_dir) = &self.app_state.current_dir {
-                                if let Some(index) = dirs.iter().position(|x| x == current_dir) {
-                                    current_dir_index = index as i8;
-                                } else {
-                                    current_dir_index = -1;
-                                }
-                            } else {
-                                current_dir_index = -1;
-                            }
+                            let current_idx = self
+                                .app_state
+                                .current_dir
+                                .as_ref()
+                                .and_then(|d| dirs.iter().position(|x| x == d))
+                                .map(|i| i as isize)
+                                .unwrap_or(-1);
 
-                            let mut new_dir_index: i8;
-
-                            new_dir_index = current_dir_index - arrow_up_pressed as i8
-                                + arrow_down_pressed as i8;
-
-                            if new_dir_index < 0 {
-                                new_dir_index = (dirs.len() - 1) as i8;
-                            } else if new_dir_index >= dirs.len() as i8 {
-                                new_dir_index = 0;
-                            }
-
-                            self.open_dir(&dirs[new_dir_index as usize]);
+                            let new_idx = wrap_index(current_idx + delta, dirs.len());
+                            self.open_dir(&dirs[new_idx]);
                         } else if self.app_state.current_dir.is_some() {
-                            let mut files: Vec<PathBuf> =
-                                self.app_state.files.iter().cloned().collect();
+                            // Navigate files
+                            let mut files: Vec<_> = self.app_state.files.iter().cloned().collect();
                             files.sort();
 
-                            let current_files_index: i64;
-                            if let Some(selected_file) = &self.app_state.selected_file {
-                                if let Some(index) = files.iter().position(|x| x == selected_file) {
-                                    current_files_index = index as i64;
-                                } else {
-                                    current_files_index = -1;
-                                }
-                            } else {
-                                current_files_index = -1;
+                            if !files.is_empty() {
+                                let current_idx = self
+                                    .app_state
+                                    .selected_file
+                                    .as_ref()
+                                    .and_then(|f| files.iter().position(|x| x == f))
+                                    .map(|i| i as isize)
+                                    .unwrap_or(-1);
+
+                                let new_idx = wrap_index(current_idx + delta, files.len());
+                                self.app_state.selected_file = Some(files[new_idx].clone());
                             }
-
-                            let mut new_files_index: i64;
-
-                            new_files_index = current_files_index - arrow_up_pressed as i64
-                                + arrow_down_pressed as i64;
-
-                            if new_files_index < 0 {
-                                new_files_index = (files.len() - 1) as i64;
-                            } else if new_files_index >= files.len() as i64 {
-                                new_files_index = 0;
-                            }
-
-                            self.app_state.selected_file =
-                                Some(files[new_files_index as usize].clone());
                         }
                     }
                 }
             }
         });
     }
+}
+
+/// Wraps an index to stay within bounds [0, len)
+fn wrap_index(idx: isize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let len = len as isize;
+    ((idx % len + len) % len) as usize
 }

@@ -11,6 +11,11 @@ use pwsp::{
 
 impl App for SoundpadGui {
     fn update(&mut self, ctx: &Context, _frame: &mut EFrame) {
+        // Poll for tray menu actions
+        self.poll_tray_messages(ctx);
+        // Poll for global hotkey actions
+        self.poll_hotkey_messages();
+
         {
             let guard = self.audio_player_state_shared.lock().unwrap();
             self.audio_player_state = guard.clone();
@@ -77,6 +82,46 @@ impl App for SoundpadGui {
             }
         } else {
             self.app_state.volume_slider_value = self.audio_player_state.volume;
+        }
+
+        if self.app_state.gain_dragged {
+            let new_gain = self.app_state.gain_slider_value;
+
+            make_request_sync(Request::set_gain(new_gain)).ok();
+
+            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            guard.new_gain = Some(self.app_state.gain_slider_value);
+            guard.gain = self.app_state.gain_slider_value;
+
+            self.app_state.gain_dragged = false;
+
+            if self.config.save_gain {
+                let mut daemon_config = get_daemon_config();
+                daemon_config.default_gain = Some(new_gain);
+                daemon_config.save_to_file().ok();
+            }
+        } else {
+            self.app_state.gain_slider_value = self.audio_player_state.gain;
+        }
+
+        if self.app_state.mic_gain_dragged {
+            let new_mic_gain = self.app_state.mic_gain_slider_value;
+
+            make_request_sync(Request::set_mic_gain(new_mic_gain)).ok();
+
+            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            guard.new_mic_gain = Some(self.app_state.mic_gain_slider_value);
+            guard.mic_gain = self.app_state.mic_gain_slider_value;
+
+            self.app_state.mic_gain_dragged = false;
+
+            if self.config.save_mic_gain {
+                let mut daemon_config = get_daemon_config();
+                daemon_config.default_mic_gain = Some(new_mic_gain);
+                daemon_config.save_to_file().ok();
+            }
+        } else {
+            self.app_state.mic_gain_slider_value = self.audio_player_state.mic_gain;
         }
 
         ctx.request_repaint_after_secs(1.0 / 60.0);

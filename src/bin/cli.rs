@@ -43,8 +43,10 @@ enum Actions {
     TogglePause,
     /// Stop audio playback and clear the queue
     Stop,
-    /// Play a file
+    /// Play a file (through virtual mic)
     Play { file_path: PathBuf },
+    /// Preview a file (speakers only, not through virtual mic)
+    Preview { file_path: PathBuf },
     /// Toggle loop
     ToggleLoop,
 }
@@ -55,6 +57,10 @@ enum GetCommands {
     IsPaused,
     /// Playback volume
     Volume,
+    /// Output gain/boost (1.0 = normal, 2.0 = 2x boost)
+    Gain,
+    /// Mic passthrough gain (boost your voice)
+    MicGain,
     /// Playback position (in seconds)
     Position,
     /// Duration of the current file
@@ -75,6 +81,10 @@ enum GetCommands {
 enum SetCommands {
     /// Playback volume
     Volume { volume: f32 },
+    /// Output gain/boost (1.0 = normal, 2.0 = 2x boost, max 5.0)
+    Gain { gain: f32 },
+    /// Mic passthrough gain (boost your voice, 0.5 - 3.0)
+    MicGain { mic_gain: f32 },
     /// Playback position (in seconds)
     Position { position: f32 },
     /// Audio input id (see pwsp-cli get inputs)
@@ -97,11 +107,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Actions::TogglePause => Request::toggle_pause(),
             Actions::Stop => Request::stop(),
             Actions::Play { file_path } => Request::play(file_path.to_str().unwrap()),
+            Actions::Preview { file_path } => Request::preview(file_path.to_str().unwrap()),
             Actions::ToggleLoop => Request::toggle_loop(),
         },
         Commands::Get { parameter } => match parameter {
             GetCommands::IsPaused => Request::get_is_paused(),
             GetCommands::Volume => Request::get_volume(),
+            GetCommands::Gain => Request::get_gain(),
+            GetCommands::MicGain => Request::get_mic_gain(),
             GetCommands::Position => Request::get_position(),
             GetCommands::Duration => Request::get_duration(),
             GetCommands::State => Request::get_state(),
@@ -112,6 +125,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
         Commands::Set { parameter } => match parameter {
             SetCommands::Volume { volume } => Request::set_volume(volume),
+            SetCommands::Gain { gain } => Request::set_gain(gain),
+            SetCommands::MicGain { mic_gain } => Request::set_mic_gain(mic_gain),
             SetCommands::Position { position } => Request::seek(position),
             SetCommands::Input { name } => Request::set_input(&name),
             SetCommands::Loop { enabled } => Request::set_loop(&enabled),

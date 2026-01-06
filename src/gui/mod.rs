@@ -1,7 +1,11 @@
 mod draw;
+mod hotkeys;
 mod input;
+pub mod tray;
 mod update;
 
+use crate::gui::hotkeys::{HotkeyAction, HotkeyManager};
+use crate::gui::tray::{TrayHandle, TrayMessage, start_tray};
 use eframe::{HardwareAcceleration, NativeOptions, icon_data::from_png_bytes, run_native};
 use egui::{Context, Vec2, ViewportBuilder};
 use pwsp::{
@@ -18,6 +22,7 @@ use pwsp::{
 };
 use rfd::FileDialog;
 use std::path::PathBuf;
+use std::sync::mpsc::TryRecvError;
 use std::{
     error::Error,
     sync::{Arc, Mutex},
@@ -32,6 +37,8 @@ struct SoundpadGui {
     pub config: GuiConfig,
     pub audio_player_state: AudioPlayerState,
     pub audio_player_state_shared: Arc<Mutex<AudioPlayerState>>,
+    pub tray_handle: Option<TrayHandle>,
+    pub hotkey_manager: Option<HotkeyManager>,
 }
 
 impl SoundpadGui {
@@ -40,19 +47,87 @@ impl SoundpadGui {
         start_app_state_thread(audio_player_state.clone());
 
         let config = get_gui_config();
-
         ctx.set_zoom_factor(config.scale_factor);
 
-        let mut soundpad_gui = SoundpadGui {
-            app_state: AppState::default(),
-            config: config.clone(),
-            audio_player_state: AudioPlayerState::default(),
-            audio_player_state_shared: audio_player_state.clone(),
+        let mut app_state = AppState::default();
+        app_state.dirs = config.dirs.clone();
+        app_state.gain_slider_value = 1.0;
+        app_state.mic_gain_slider_value = 1.0;
+
+        let mut audio_player_state_local = AudioPlayerState::default();
+        audio_player_state_local.gain = 1.0;
+        audio_player_state_local.mic_gain = 1.0;
+
+        let tray_handle = start_tray();
+        let hotkey_manager = HotkeyManager::new();
+
+        SoundpadGui {
+            app_state,
+            config,
+            audio_player_state: audio_player_state_local,
+            audio_player_state_shared: audio_player_state,
+            tray_handle,
+            hotkey_manager,
+        }
+    }
+
+    fn poll_tray_messages(&mut self, ctx: &Context) {
+        // Collect messages first to avoid borrow issues
+        let messages: Vec<TrayMessage> = if let Some(ref tray) = self.tray_handle {
+            let mut msgs = Vec::new();
+            loop {
+                match tray.receiver.try_recv() {
+                    Ok(msg) => msgs.push(msg),
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                }
+            }
+            msgs
+        } else {
+            Vec::new()
         };
 
-        soundpad_gui.app_state.dirs = config.dirs;
+        // Process messages
+        for msg in messages {
+            match msg {
+                TrayMessage::PlayPause => {
+                    self.play_toggle();
+                }
+                TrayMessage::Stop => {
+                    self.stop();
+                }
+                TrayMessage::Quit => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
 
-        soundpad_gui
+    fn poll_hotkey_messages(&mut self) {
+        // Collect messages first to avoid borrow issues
+        let actions: Vec<HotkeyAction> = if let Some(ref hk) = self.hotkey_manager {
+            let mut acts = Vec::new();
+            loop {
+                match hk.receiver.try_recv() {
+                    Ok(action) => acts.push(action),
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                }
+            }
+            acts
+        } else {
+            Vec::new()
+        };
+
+        // Process actions
+        for action in actions {
+            match action {
+                HotkeyAction::PlayPause => {
+                    self.play_toggle();
+                }
+                HotkeyAction::Stop => {
+                    self.stop();
+                }
+            }
+        }
     }
 
     pub fn play_toggle(&mut self) {
@@ -71,7 +146,7 @@ impl SoundpadGui {
 
         if let Some(state) = new_state {
             let mut guard = self.audio_player_state_shared.lock().unwrap();
-            guard.new_state = Some(state.clone());
+            guard.new_state = Some(state);
             guard.state = state;
         }
     }
@@ -89,35 +164,53 @@ impl SoundpadGui {
             for path in paths {
                 self.app_state.dirs.insert(path);
             }
-            self.config.dirs = self.app_state.dirs.clone();
-            self.config.save_to_file().ok();
+            self.save_dirs_config();
         }
     }
 
     pub fn remove_dir(&mut self, path: &PathBuf) {
         self.app_state.dirs.remove(path);
-        if let Some(current_dir) = &self.app_state.current_dir
-            && current_dir == path
-        {
+        if self.app_state.current_dir.as_ref() == Some(path) {
             self.app_state.current_dir = None;
             self.app_state.files.clear();
         }
+        self.save_dirs_config();
+    }
+
+    fn save_dirs_config(&mut self) {
         self.config.dirs = self.app_state.dirs.clone();
         self.config.save_to_file().ok();
     }
 
     pub fn open_dir(&mut self, path: &PathBuf) {
         self.app_state.current_dir = Some(path.clone());
-        self.app_state.files = path
-            .read_dir()
-            .unwrap()
-            .filter_map(|res| res.ok())
-            .map(|entry| entry.path())
-            .collect();
+        self.app_state.files = match path.read_dir() {
+            Ok(entries) => entries.filter_map(|res| res.ok()).map(|e| e.path()).collect(),
+            Err(e) => {
+                eprintln!("Failed to read directory {}: {}", path.display(), e);
+                Default::default()
+            }
+        };
     }
 
     pub fn play_file(&mut self, path: &PathBuf) {
-        make_request_sync(Request::play(path.to_str().unwrap())).ok();
+        if let Some(path_str) = path.to_str() {
+            if let Err(e) = make_request_sync(Request::play(path_str)) {
+                eprintln!("Failed to send play request: {}", e);
+            }
+        } else {
+            eprintln!("Invalid file path encoding");
+        }
+    }
+
+    pub fn preview_file(&mut self, path: &PathBuf) {
+        if let Some(path_str) = path.to_str() {
+            if let Err(e) = make_request_sync(Request::preview(path_str)) {
+                eprintln!("Failed to send preview request: {}", e);
+            }
+        } else {
+            eprintln!("Invalid file path encoding");
+        }
     }
 
     pub fn set_input(&mut self, name: String) {
@@ -132,6 +225,26 @@ impl SoundpadGui {
 
     pub fn toggle_loop(&mut self) {
         make_request_sync(Request::toggle_loop()).ok();
+    }
+
+    pub fn stop(&mut self) {
+        make_request_sync(Request::stop()).ok();
+        let mut guard = self.audio_player_state_shared.lock().unwrap();
+        guard.new_state = Some(PlayerState::Stopped);
+        guard.state = PlayerState::Stopped;
+    }
+
+    pub fn toggle_favorite(&mut self, path: &PathBuf) {
+        if self.config.favorites.contains(path) {
+            self.config.favorites.remove(path);
+        } else {
+            self.config.favorites.insert(path.clone());
+        }
+        self.config.save_to_file().ok();
+    }
+
+    pub fn is_favorite(&self, path: &PathBuf) -> bool {
+        self.config.favorites.contains(path)
     }
 }
 

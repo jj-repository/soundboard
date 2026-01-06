@@ -6,7 +6,7 @@ use egui::{
 use egui_material_icons::icons;
 use pwsp::types::audio_player::PlayerState;
 use pwsp::utils::gui::format_time_pair;
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 
 impl SoundpadGui {
     pub fn draw_waiting_for_daemon(&mut self, ui: &mut Ui) {
@@ -42,6 +42,10 @@ impl SoundpadGui {
             // --------- Checkboxes ----------
             let save_volume_response =
                 ui.checkbox(&mut self.config.save_volume, "Always remember volume");
+            let save_gain_response =
+                ui.checkbox(&mut self.config.save_gain, "Always remember gain boost");
+            let save_mic_gain_response =
+                ui.checkbox(&mut self.config.save_mic_gain, "Always remember mic gain");
             let save_input_response =
                 ui.checkbox(&mut self.config.save_input, "Always remember microphone");
             let save_scale_response = ui.checkbox(
@@ -54,6 +58,8 @@ impl SoundpadGui {
             );
 
             if save_volume_response.changed()
+                || save_gain_response.changed()
+                || save_mic_gain_response.changed()
                 || save_input_response.changed()
                 || save_scale_response.changed()
                 || pause_on_exit_response.changed()
@@ -108,6 +114,14 @@ impl SoundpadGui {
             }
             // --------------------------------
 
+            // ---------- Stop Button ----------
+            let stop_button = Button::new(icons::ICON_STOP).corner_radius(15.0);
+            let stop_button_response = ui.add_sized([30.0, 30.0], stop_button);
+            if stop_button_response.clicked() {
+                self.stop();
+            }
+            // --------------------------------
+
             // ---------- Loop Button ----------
             let loop_button = Button::new(
                 RichText::new(match self.audio_player_state.looped {
@@ -133,11 +147,13 @@ impl SoundpadGui {
             .step_by(0.01);
 
             let default_slider_width = ui.spacing().slider_width;
+            // Account for: stop button, time label, volume icon, volume slider, gain icon, gain slider, gain label
             let position_slider_width = ui.available_width()
-                - (30.0 * 3.0)
-                - default_slider_width
-                - (ui.spacing().item_spacing.x * 6.0);
-            ui.spacing_mut().slider_width = position_slider_width;
+                - (30.0 * 7.0)  // 7 controls at 30px each (added stop button)
+                - default_slider_width  // volume slider
+                - default_slider_width  // gain slider
+                - (ui.spacing().item_spacing.x * 11.0);
+            ui.spacing_mut().slider_width = position_slider_width.max(50.0);
             let position_slider_response = ui.add_sized([30.0, 30.0], position_slider);
             if position_slider_response.drag_stopped() {
                 self.app_state.position_dragged = true;
@@ -182,6 +198,34 @@ impl SoundpadGui {
                 self.app_state.volume_dragged = true;
             }
             // --------------------------------
+
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            // ---------- Gain Icon ----------
+            let gain_icon = Label::new(RichText::new(icons::ICON_GRAPHIC_EQ).size(18.0));
+            ui.add_sized([30.0, 30.0], gain_icon);
+            // --------------------------------
+
+            // ---------- Gain Slider ----------
+            let gain_slider = Slider::new(&mut self.app_state.gain_slider_value, 0.5..=3.0)
+                .show_value(false)
+                .step_by(0.1);
+
+            ui.spacing_mut().item_spacing.x = 0.0;
+
+            let gain_slider_response = ui.add_sized([30.0, 30.0], gain_slider);
+            if gain_slider_response.drag_stopped() {
+                self.app_state.gain_dragged = true;
+            }
+
+            // Gain label
+            let gain_label = Label::new(
+                RichText::new(format!("{:.1}x", self.audio_player_state.gain))
+                    .monospace()
+                    .size(12.0),
+            );
+            ui.add_sized([30.0, 30.0], gain_label);
+            // --------------------------------
         });
     }
 
@@ -205,18 +249,18 @@ impl SoundpadGui {
             ScrollArea::vertical().id_salt(0).show(ui, |ui| {
                 ui.set_min_width(area_size.x);
 
-                let mut dirs: Vec<PathBuf> = self.app_state.dirs.iter().cloned().collect();
+                let mut dirs: Vec<_> = self.app_state.dirs.iter().cloned().collect();
                 dirs.sort();
-                for path in dirs.iter() {
+                for path in &dirs {
                     ui.horizontal(|ui| {
                         let name = path
                             .file_name()
                             .map(|s| s.to_string_lossy().to_string())
                             .unwrap_or_else(|| path.to_string_lossy().to_string());
 
-                        let mut dir_button_text = RichText::new(name.clone());
+                        let mut dir_button_text = RichText::new(name);
                         if let Some(current_dir) = &self.app_state.current_dir {
-                            if current_dir.eq(path) {
+                            if current_dir == path {
                                 dir_button_text = dir_button_text.color(Color32::WHITE);
                             }
                         }
@@ -233,7 +277,7 @@ impl SoundpadGui {
                         let delete_dir_button_response =
                             ui.add_sized([18.0, 18.0], delete_dir_button);
                         if delete_dir_button_response.clicked() {
-                            self.remove_dir(&path.clone());
+                            self.remove_dir(path);
                         }
                     });
                 }
@@ -275,53 +319,121 @@ impl SoundpadGui {
                 ui.set_min_height(area_size.y);
 
                 ui.vertical(|ui| {
-                    let mut files: Vec<PathBuf> = self.app_state.files.iter().cloned().collect();
+                    let mut files: Vec<_> = self.app_state.files.iter().cloned().collect();
                     files.sort();
 
-                    for entry_path in files {
+                    let search_query = self.app_state.search_query.to_lowercase();
+                    let search_query = search_query.trim();
+
+                    // Collect favorites from current directory
+                    let favorites: Vec<_> = self.config.favorites.iter().cloned().collect();
+                    let current_dir_favorites: Vec<_> = favorites
+                        .iter()
+                        .filter(|f| files.contains(f))
+                        .cloned()
+                        .collect();
+
+                    // Draw favorites section if there are any in current directory
+                    if !current_dir_favorites.is_empty() && search_query.is_empty() {
+                        ui.label(RichText::new("Favorites").color(Color32::GOLD).monospace());
+                        ui.add_space(4.0);
+
+                        let mut sorted_favorites = current_dir_favorites.clone();
+                        sorted_favorites.sort();
+
+                        for entry_path in &sorted_favorites {
+                            self.draw_file_row(ui, entry_path, true);
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                    }
+
+                    // Draw all files
+                    for entry_path in &files {
                         if entry_path.is_dir() {
                             continue;
                         }
 
-                        if !SUPPORTED_EXTENSIONS
-                            .contains(&entry_path.extension().unwrap_or_default().to_str().unwrap())
-                        {
+                        let extension = entry_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or_default();
+
+                        if !SUPPORTED_EXTENSIONS.contains(&extension) {
                             continue;
                         }
 
                         let file_name = entry_path
                             .file_name()
-                            .unwrap()
-                            .to_string_lossy()
-                            .to_string();
+                            .map(|n| n.to_string_lossy())
+                            .unwrap_or_default();
 
-                        let search_query = self
-                            .app_state
-                            .search_query
-                            .to_lowercase()
-                            .trim()
-                            .to_string();
-
-                        if !file_name.to_lowercase().contains(search_query.as_str()) {
+                        if !file_name.to_lowercase().contains(search_query) {
                             continue;
                         }
 
-                        let mut file_button_text = RichText::new(file_name);
-                        if let Some(current_file) = &self.app_state.selected_file {
-                            if current_file.eq(&entry_path) {
-                                file_button_text = file_button_text.color(Color32::WHITE);
-                            }
-                        }
-
-                        let file_button = Button::new(file_button_text).frame(false);
-                        let file_button_response = ui.add(file_button);
-                        if file_button_response.clicked() {
-                            self.play_file(&entry_path);
-                            self.app_state.selected_file = Some(entry_path);
-                        }
+                        self.draw_file_row(ui, entry_path, false);
                     }
                 });
             });
+        });
+    }
+
+    fn draw_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, in_favorites_section: bool) {
+        let file_name = entry_path
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+
+        let is_favorite = self.is_favorite(entry_path);
+
+        ui.horizontal(|ui| {
+            // Favorite toggle button (star icon)
+            let star_icon = if is_favorite {
+                RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+            } else {
+                RichText::new(icons::ICON_STAR_BORDER).size(14.0)
+            };
+            let star_button = Button::new(star_icon).frame(false);
+            let star_response = ui.add_sized([18.0, 18.0], star_button);
+            if star_response.clicked() {
+                self.toggle_favorite(&entry_path.clone());
+            }
+            let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+            if star_response.hovered() {
+                star_response.on_hover_text(hover_text);
+            }
+
+            // Preview button (speakers only) - hide in favorites section to avoid duplication
+            if !in_favorites_section {
+                let preview_button =
+                    Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
+                        .frame(false);
+                let preview_response = ui.add_sized([18.0, 18.0], preview_button);
+                if preview_response.clicked() {
+                    self.preview_file(entry_path);
+                }
+                if preview_response.hovered() {
+                    preview_response.on_hover_text("Preview (speakers only)");
+                }
+            }
+
+            // File name button (play through virtual mic)
+            let mut file_button_text = RichText::new(file_name.to_string());
+            if let Some(current_file) = &self.app_state.selected_file {
+                if current_file == entry_path {
+                    file_button_text = file_button_text.color(Color32::WHITE);
+                }
+            }
+
+            let file_button = Button::new(file_button_text).frame(false);
+            let file_button_response = ui.add(file_button);
+            if file_button_response.clicked() {
+                self.play_file(entry_path);
+                self.app_state.selected_file = Some(entry_path.clone());
+            }
         });
     }
 
@@ -351,6 +463,24 @@ impl SoundpadGui {
             if selected_input != prev_input {
                 self.set_input(selected_input);
             }
+            // --------------------------------
+
+            ui.add_space(10.0);
+
+            // ---------- Mic Gain ----------
+            ui.label(RichText::new("Mic:").monospace().size(12.0));
+            let mic_gain_slider = Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
+                .show_value(false)
+                .step_by(0.1);
+            let mic_gain_slider_response = ui.add_sized([60.0, 18.0], mic_gain_slider);
+            if mic_gain_slider_response.drag_stopped() {
+                self.app_state.mic_gain_dragged = true;
+            }
+            ui.label(
+                RichText::new(format!("{:.1}x", self.audio_player_state.mic_gain))
+                    .monospace()
+                    .size(12.0),
+            );
             // --------------------------------
 
             ui.add_space(ui.available_width() - 18.0 - ui.spacing().item_spacing.x);

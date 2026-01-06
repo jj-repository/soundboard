@@ -2,7 +2,6 @@ use crate::{
     types::{
         audio_player::AudioPlayer,
         config::DaemonConfig,
-        pipewire::AudioDevice,
         socket::{Request, Response},
     },
     utils::pipewire::{create_link, get_all_devices},
@@ -22,7 +21,13 @@ pub async fn get_audio_player() -> &'static Mutex<AudioPlayer> {
     AUDIO_PLAYER
         .get_or_init(|| async {
             println!("Initializing audio player");
-            Mutex::new(AudioPlayer::new().await.unwrap())
+            match AudioPlayer::new().await {
+                Ok(player) => Mutex::new(player),
+                Err(e) => {
+                    eprintln!("Failed to initialize audio player: {}", e);
+                    panic!("Cannot continue without audio player: {}", e);
+                }
+            }
         })
         .await
 }
@@ -38,52 +43,53 @@ pub fn get_daemon_config() -> DaemonConfig {
 pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
     let (input_devices, output_devices) = get_all_devices().await?;
 
-    let mut pwsp_daemon_output: Option<AudioDevice> = None;
-    for output_device in output_devices {
-        if output_device.name == "alsa_playback.pwsp-daemon" {
-            pwsp_daemon_output = Some(output_device);
-            break;
+    let pwsp_daemon_output = match output_devices
+        .into_iter()
+        .find(|d| d.name == "alsa_playback.pwsp-daemon")
+    {
+        Some(device) => device,
+        None => {
+            println!("Could not find pwsp-daemon output device, skipping device linking");
+            return Ok(());
+        }
+    };
+
+    let pwsp_daemon_input = match input_devices
+        .into_iter()
+        .find(|d| d.name == "pwsp-virtual-mic")
+    {
+        Some(device) => device,
+        None => {
+            println!("Could not find pwsp-daemon input device, skipping device linking");
+            return Ok(());
+        }
+    };
+
+    // Check if all required ports are available
+    match (
+        &pwsp_daemon_output.output_fl,
+        &pwsp_daemon_output.output_fr,
+        &pwsp_daemon_input.input_fl,
+        &pwsp_daemon_input.input_fr,
+    ) {
+        (Some(output_fl), Some(output_fr), Some(input_fl), Some(input_fr)) => {
+            create_link(
+                output_fl.clone(),
+                output_fr.clone(),
+                input_fl.clone(),
+                input_fr.clone(),
+            )?;
+        }
+        (out_fl, out_fr, in_fl, in_fr) => {
+            eprintln!(
+                "Required ports not available (output_fl: {}, output_fr: {}, input_fl: {}, input_fr: {}), skipping device linking",
+                out_fl.is_some(),
+                out_fr.is_some(),
+                in_fl.is_some(),
+                in_fr.is_some()
+            );
         }
     }
-
-    if pwsp_daemon_output.is_none() {
-        println!("Could not find pwsp-daemon output device, skipping device linking");
-        return Ok(());
-    }
-
-    let mut pwsp_daemon_input: Option<AudioDevice> = None;
-    for input_device in input_devices {
-        if input_device.name == "pwsp-virtual-mic" {
-            pwsp_daemon_input = Some(input_device);
-            break;
-        }
-    }
-
-    if pwsp_daemon_input.is_none() {
-        println!("Could not find pwsp-daemon input device, skipping device linking");
-        return Ok(());
-    }
-
-    let pwsp_daemon_output = pwsp_daemon_output.unwrap();
-    let pwsp_daemon_input = pwsp_daemon_input.unwrap();
-
-    let output_fl = pwsp_daemon_output
-        .clone()
-        .output_fl
-        .expect("Failed to get pwsp-daemon output_fl");
-    let output_fr = pwsp_daemon_output
-        .clone()
-        .output_fr
-        .expect("Failed to get pwsp-daemon output_fl");
-    let input_fl = pwsp_daemon_input
-        .clone()
-        .input_fl
-        .expect("Failed to get pwsp-daemon input_fl");
-    let input_fr = pwsp_daemon_input
-        .clone()
-        .input_fr
-        .expect("Failed to get pwsp-daemon input_fr");
-    create_link(output_fl, output_fr, input_fl, input_fr)?;
 
     Ok(())
 }

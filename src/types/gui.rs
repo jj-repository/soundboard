@@ -13,9 +13,13 @@ pub struct AppState {
 
     pub position_slider_value: f32,
     pub volume_slider_value: f32,
+    pub gain_slider_value: f32,
+    pub mic_gain_slider_value: f32,
 
     pub position_dragged: bool,
     pub volume_dragged: bool,
+    pub gain_dragged: bool,
+    pub mic_gain_dragged: bool,
 
     pub show_settings: bool,
 
@@ -40,6 +44,10 @@ pub struct AudioPlayerState {
 
     pub volume: f32,
     pub new_volume: Option<f32>,
+    pub gain: f32,
+    pub new_gain: Option<f32>,
+    pub mic_gain: f32,
+    pub new_mic_gain: Option<f32>,
     pub position: f32,
     pub new_position: Option<f32>,
     pub duration: f32,

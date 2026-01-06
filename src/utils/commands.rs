@@ -21,6 +21,26 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
                 .ok();
             Some(Box::new(SetVolumeCommand { volume }))
         }
+        "get_gain" => Some(Box::new(GetGainCommand {})),
+        "set_gain" => {
+            let gain = request
+                .args
+                .get("gain")
+                .unwrap_or(&String::new())
+                .parse::<f32>()
+                .ok();
+            Some(Box::new(SetGainCommand { gain }))
+        }
+        "get_mic_gain" => Some(Box::new(GetMicGainCommand {})),
+        "set_mic_gain" => {
+            let mic_gain = request
+                .args
+                .get("mic_gain")
+                .unwrap_or(&String::new())
+                .parse::<f32>()
+                .ok();
+            Some(Box::new(SetMicGainCommand { mic_gain }))
+        }
         "get_position" => Some(Box::new(GetPositionCommand {})),
         "seek" => {
             let position = request
@@ -40,6 +60,15 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
                 .parse::<PathBuf>()
                 .ok();
             Some(Box::new(PlayCommand { file_path }))
+        }
+        "preview" => {
+            let file_path = request
+                .args
+                .get("file_path")
+                .unwrap_or(&String::new())
+                .parse::<PathBuf>()
+                .ok();
+            Some(Box::new(PreviewCommand { file_path }))
         }
         "get_current_file_path" => Some(Box::new(GetCurrentFilePathCommand {})),
         "get_input" => Some(Box::new(GetCurrentInputCommand {})),

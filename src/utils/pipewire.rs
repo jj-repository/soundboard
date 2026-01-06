@@ -57,9 +57,19 @@ fn parse_global_object(
             };
             // Check if the object is a port
         } else if props.get("port.direction").is_some() {
-            let node_id = props.get("node.id").unwrap().parse::<u32>().unwrap();
-            let port_id = props.get("port.id").unwrap().parse::<u32>().unwrap();
-            let port_name = props.get("port.name").unwrap();
+            // Safely parse port properties, return None if any parsing fails
+            let node_id = match props.get("node.id").and_then(|s| s.parse::<u32>().ok()) {
+                Some(id) => id,
+                None => return (None, None),
+            };
+            let port_id = match props.get("port.id").and_then(|s| s.parse::<u32>().ok()) {
+                Some(id) => id,
+                None => return (None, None),
+            };
+            let port_name = match props.get("port.name") {
+                Some(name) => name,
+                None => return (None, None),
+            };
 
             let port = Port {
                 node_id,
@@ -79,7 +89,13 @@ async fn pw_get_global_objects_thread(
 ) {
     pipewire::init();
 
-    let main_loop = MainLoopRc::new(None).expect("Failed to initialize pipewire main loop");
+    let main_loop = match MainLoopRc::new(None) {
+        Ok(ml) => ml,
+        Err(e) => {
+            eprintln!("Failed to initialize pipewire main loop: {}", e);
+            return;
+        }
+    };
 
     // Stop main loop on Terminate message
     let _receiver = pw_receiver.attach(main_loop.loop_(), {
@@ -87,13 +103,27 @@ async fn pw_get_global_objects_thread(
         move |_| _main_loop.quit()
     });
 
-    let context = ContextRc::new(&main_loop, None).expect("Failed to create pipewire context");
-    let core = context
-        .connect(None)
-        .expect("Failed to connect to pipewire context");
-    let registry = core
-        .get_registry()
-        .expect("Failed to get registry from pipewire context");
+    let context = match ContextRc::new(&main_loop, None) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("Failed to create pipewire context: {}", e);
+            return;
+        }
+    };
+    let core = match context.connect(None) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to connect to pipewire context: {}", e);
+            return;
+        }
+    };
+    let registry = match core.get_registry() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to get registry from pipewire context: {}", e);
+            return;
+        }
+    };
 
     let _listener = registry
         .add_listener_local()
@@ -144,15 +174,13 @@ pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), B
             }
             Ok(None) | Err(_) => {
                 // Pipewire thread is finished and we can collect our devices
-                pw_sender
-                    .send(Terminate {})
-                    .expect("Failed to terminate pipewire thread");
+                // Ignore send error - thread may have already exited
+                let _ = pw_sender.send(Terminate {});
 
                 for port in ports {
                     let node_id = port.node_id;
 
-                    if input_devices.contains_key(&node_id) {
-                        let input_device = input_devices.get_mut(&node_id).unwrap();
+                    if let Some(input_device) = input_devices.get_mut(&node_id) {
                         match port.name.as_str() {
                             "input_FL" => input_device.input_fl = Some(port),
                             "input_FR" => input_device.input_fr = Some(port),
@@ -165,13 +193,12 @@ pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), B
                                 input_device.input_fr = Some(port)
                             }
                             "capture_MONO" => {
-                                input_device.input_fl = Some(port.clone());
-                                input_device.input_fr = Some(port);
+                                input_device.output_fl = Some(port.clone());
+                                input_device.output_fr = Some(port);
                             }
                             _ => {}
                         }
-                    } else if output_devices.contains_key(&node_id) {
-                        let output_device = output_devices.get_mut(&node_id).unwrap();
+                    } else if let Some(output_device) = output_devices.get_mut(&node_id) {
                         match port.name.as_str() {
                             "input_FL" => output_device.input_fl = Some(port),
                             "input_FR" => output_device.input_fr = Some(port),
@@ -224,11 +251,27 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
     let _pw_thread = thread::spawn(move || {
         pipewire::init();
 
-        let main_loop = MainLoopRc::new(None).expect("Failed to initialize pipewire main loop");
-        let context = ContextRc::new(&main_loop, None).expect("Failed to create pipewire context");
-        let core = context
-            .connect(None)
-            .expect("Failed to connect to pipewire context");
+        let main_loop = match MainLoopRc::new(None) {
+            Ok(ml) => ml,
+            Err(e) => {
+                eprintln!("Failed to initialize pipewire main loop: {}", e);
+                return;
+            }
+        };
+        let context = match ContextRc::new(&main_loop, None) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                eprintln!("Failed to create pipewire context: {}", e);
+                return;
+            }
+        };
+        let core = match context.connect(None) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to connect to pipewire context: {}", e);
+                return;
+            }
+        };
 
         let props = properties!(
             "factory.name" => "support.null-audio-sink",
@@ -240,9 +283,13 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
             "object.linger" => "false", // Destroy the node on app exit
         );
 
-        let _node = core
-            .create_object::<pipewire::node::Node>("adapter", &props)
-            .expect("Failed to create virtual mic");
+        let _node = match core.create_object::<pipewire::node::Node>("adapter", &props) {
+            Ok(node) => node,
+            Err(e) => {
+                eprintln!("Failed to create virtual mic: {}", e);
+                return;
+            }
+        };
 
         let _receiver = pw_receiver.attach(main_loop.loop_(), {
             let _main_loop = main_loop.clone();
@@ -267,11 +314,27 @@ pub fn create_link(
     let _pw_thread = thread::spawn(move || {
         pipewire::init();
 
-        let main_loop = MainLoopRc::new(None).expect("Failed to initialize pipewire main loop");
-        let context = ContextRc::new(&main_loop, None).expect("Failed to create pipewire context");
-        let core = context
-            .connect(None)
-            .expect("Failed to connect to pipewire context");
+        let main_loop = match MainLoopRc::new(None) {
+            Ok(ml) => ml,
+            Err(e) => {
+                eprintln!("Failed to initialize pipewire main loop: {}", e);
+                return;
+            }
+        };
+        let context = match ContextRc::new(&main_loop, None) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                eprintln!("Failed to create pipewire context: {}", e);
+                return;
+            }
+        };
+        let core = match context.connect(None) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to connect to pipewire context: {}", e);
+                return;
+            }
+        };
 
         let props_fl = properties! {
             "link.output.node" => format!("{}", output_fl.node_id).as_str(),
@@ -286,12 +349,20 @@ pub fn create_link(
             "link.input.port"  => format!("{}", input_fr.port_id).as_str(),
         };
 
-        let _link_fl = core
-            .create_object::<Link>("link-factory", &props_fl)
-            .expect("Failed to create link FL");
-        let _link_fr = core
-            .create_object::<Link>("link-factory", &props_fr)
-            .expect("Failed to create link FR");
+        let _link_fl = match core.create_object::<Link>("link-factory", &props_fl) {
+            Ok(link) => link,
+            Err(e) => {
+                eprintln!("Failed to create link FL: {}", e);
+                return;
+            }
+        };
+        let _link_fr = match core.create_object::<Link>("link-factory", &props_fr) {
+            Ok(link) => link,
+            Err(e) => {
+                eprintln!("Failed to create link FR: {}", e);
+                return;
+            }
+        };
 
         let _receiver = pw_receiver.attach(main_loop.loop_(), {
             let _main_loop = main_loop.clone();

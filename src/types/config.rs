@@ -6,14 +6,18 @@ use std::{collections::HashSet, error::Error, fs, path::PathBuf};
 pub struct DaemonConfig {
     pub default_input_name: Option<String>,
     pub default_volume: Option<f32>,
+    pub default_gain: Option<f32>,
+    pub default_mic_gain: Option<f32>,
 }
 
 impl DaemonConfig {
     pub fn save_to_file(&self) -> Result<(), Box<dyn Error>> {
         let config_path = get_config_path()?.join("daemon.json");
-        let config_dir = config_path.parent().unwrap();
+        let config_dir = config_path
+            .parent()
+            .ok_or("Failed to get config parent directory")?;
 
-        if !config_path.exists() {
+        if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }
 
@@ -34,11 +38,15 @@ pub struct GuiConfig {
     pub scale_factor: f32,
 
     pub save_volume: bool,
+    pub save_gain: bool,
+    pub save_mic_gain: bool,
     pub save_input: bool,
     pub save_scale_factor: bool,
     pub pause_on_exit: bool,
 
     pub dirs: HashSet<PathBuf>,
+    #[serde(default)]
+    pub favorites: HashSet<PathBuf>,
 }
 
 impl Default for GuiConfig {
@@ -47,11 +55,14 @@ impl Default for GuiConfig {
             scale_factor: 1.0,
 
             save_volume: false,
+            save_gain: false,
+            save_mic_gain: false,
             save_input: false,
             save_scale_factor: false,
             pause_on_exit: false,
 
             dirs: HashSet::default(),
+            favorites: HashSet::default(),
         }
     }
 }
@@ -59,9 +70,11 @@ impl Default for GuiConfig {
 impl GuiConfig {
     pub fn save_to_file(&mut self) -> Result<(), Box<dyn Error>> {
         let config_path = get_config_path()?.join("gui.json");
-        let config_dir = config_path.parent().unwrap();
+        let config_dir = config_path
+            .parent()
+            .ok_or("Failed to get config parent directory")?;
 
-        if !config_path.exists() {
+        if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }
 

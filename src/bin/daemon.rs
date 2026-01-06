@@ -49,7 +49,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let commands_loop_handle = tokio::spawn(async {
-        commands_loop(listener).await.ok();
+        if let Err(e) = commands_loop(listener).await {
+            eprintln!("Commands loop error: {}", e);
+        }
     });
 
     let player_loop_handle = tokio::spawn(async {
@@ -88,21 +90,31 @@ async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
                 return;
             }
 
-            let request: Request = serde_json::from_slice(&buffer).unwrap();
+            let request: Request = match serde_json::from_slice(&buffer) {
+                Ok(req) => req,
+                Err(e) => {
+                    eprintln!("Failed to parse request JSON: {}", e);
+                    return;
+                }
+            };
             // ---------- Read request (end) ----------
 
             // ---------- Generate response (start) ----------
             let command = parse_command(&request);
-            let response: Response;
-            if let Some(command) = command {
-                response = command.execute().await;
-            } else {
-                response = Response::new(false, "Unknown command");
-            }
+            let response: Response = match command {
+                Some(cmd) => cmd.execute().await,
+                None => Response::new(false, "Unknown command"),
+            };
             // ---------- Generate response (end) ----------
 
             // ---------- Send response (start) ----------
-            let response_data = serde_json::to_vec(&response).unwrap();
+            let response_data = match serde_json::to_vec(&response) {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("Failed to serialize response: {}", e);
+                    return;
+                }
+            };
             let response_len = response_data.len() as u32;
 
             if stream.write_all(&response_len.to_le_bytes()).await.is_err() {
@@ -123,18 +135,15 @@ async fn player_loop() {
         let mut audio_player = get_audio_player().await.lock().await;
 
         // Start playback again if loop is enabled
-        let should_play = audio_player.get_state() == PlayerState::Stopped
-            && audio_player.current_file_path.is_some()
-            && audio_player.looped;
-
-        if should_play {
-            let file_path = audio_player.current_file_path.clone().unwrap();
-            audio_player
-                .play(&file_path)
-                .await
-                .expect("Something went wrong while trying to play the file");
+        if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {
+            if let Some(file_path) = audio_player.current_file_path.clone() {
+                if let Err(e) = audio_player.play(&file_path).await {
+                    eprintln!("Failed to play looped file: {}", e);
+                }
+            }
         }
 
+        drop(audio_player); // Release lock before sleeping
         sleep(Duration::from_millis(100)).await;
     }
 }
