@@ -32,6 +32,9 @@ egui_material_icons = "0.5.0"
 ksni = { version = "0.3", features = ["blocking"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 global-hotkey = "0.6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+semver = "1.0"
+open = "5"
 
 [[bin]]
 name = "pwsp-daemon"

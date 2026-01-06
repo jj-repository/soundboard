@@ -15,6 +15,8 @@ impl App for SoundpadGui {
         self.poll_tray_messages(ctx);
         // Poll for global hotkey actions
         self.poll_hotkey_messages();
+        // Poll for update check results
+        self.poll_update_status();
 
         {
             let guard = self.audio_player_state_shared.lock().unwrap();

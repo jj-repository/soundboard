@@ -5,7 +5,9 @@ use egui::{
 };
 use egui_material_icons::icons;
 use pwsp::types::audio_player::PlayerState;
+use pwsp::types::gui::UpdateStatus;
 use pwsp::utils::gui::format_time_pair;
+use pwsp::utils::updater::get_current_version;
 use std::error::Error;
 
 impl SoundpadGui {
@@ -65,6 +67,99 @@ impl SoundpadGui {
                 || pause_on_exit_response.changed()
             {
                 self.config.save_to_file().ok();
+            }
+            // --------------------------------
+
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // --------- Updates Section ----------
+            ui.label(RichText::new("Updates").color(Color32::WHITE).monospace());
+            ui.add_space(5.0);
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Current version: v{}", get_current_version()));
+            });
+
+            match &self.app_state.update_status {
+                UpdateStatus::NotChecked => {
+                    if ui.button("Check for updates").clicked() {
+                        self.check_for_updates();
+                    }
+                }
+                UpdateStatus::Checking => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Checking for updates...");
+                    });
+                }
+                UpdateStatus::UpToDate => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("You're up to date!").color(Color32::GREEN));
+                        if ui.small_button("Check again").clicked() {
+                            self.check_for_updates();
+                        }
+                    });
+                }
+                UpdateStatus::UpdateAvailable { latest_version, release_url, download_url } => {
+                    let latest_version = latest_version.clone();
+                    let release_url = release_url.clone();
+                    let download_url = download_url.clone();
+
+                    ui.label(
+                        RichText::new(format!("New version available: v{}", latest_version))
+                            .color(Color32::YELLOW),
+                    );
+
+                    let mut should_download = false;
+                    let mut download_url_to_use = None;
+                    let mut should_open_release = false;
+
+                    ui.horizontal(|ui| {
+                        if let Some(url) = &download_url {
+                            if ui.button("Download update").clicked() {
+                                should_download = true;
+                                download_url_to_use = Some(url.clone());
+                            }
+                        }
+                        if ui.button("View release").clicked() {
+                            should_open_release = true;
+                        }
+                    });
+
+                    if should_download {
+                        if let Some(url) = download_url_to_use {
+                            self.download_update(url);
+                        }
+                    }
+                    if should_open_release {
+                        let _ = open::that(&release_url);
+                    }
+                }
+                UpdateStatus::Downloading { progress } => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("Downloading... {:.0}%", progress * 100.0));
+                    });
+                }
+                UpdateStatus::Downloaded { file_path } => {
+                    let file_path = file_path.clone();
+                    ui.label(RichText::new("Update downloaded!").color(Color32::GREEN));
+                    ui.label(format!("Saved to: {}", file_path.display()));
+                    if ui.button("Open download location").clicked() {
+                        if let Some(parent) = file_path.parent() {
+                            let _ = open::that(parent);
+                        }
+                    }
+                }
+                UpdateStatus::Error(msg) => {
+                    let msg = msg.clone();
+                    ui.label(RichText::new(format!("Error: {}", msg)).color(Color32::RED));
+                    if ui.small_button("Try again").clicked() {
+                        self.check_for_updates();
+                    }
+                }
             }
             // --------------------------------
         });

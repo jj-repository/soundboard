@@ -7,6 +7,26 @@ use std::{
     path::PathBuf,
 };
 
+#[derive(Debug, Clone, Default)]
+pub enum UpdateStatus {
+    #[default]
+    NotChecked,
+    Checking,
+    UpToDate,
+    UpdateAvailable {
+        latest_version: String,
+        release_url: String,
+        download_url: Option<String>,
+    },
+    Downloading {
+        progress: f32,
+    },
+    Downloaded {
+        file_path: PathBuf,
+    },
+    Error(String),
+}
+
 #[derive(Default, Debug)]
 pub struct AppState {
     pub search_query: String,
@@ -31,6 +51,8 @@ pub struct AppState {
 
     pub search_field_id: Option<Id>,
     pub force_focus_id: Option<Id>,
+
+    pub update_status: UpdateStatus,
 }
 
 #[derive(Default, Debug, Clone)]
