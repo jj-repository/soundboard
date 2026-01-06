@@ -62,7 +62,7 @@ impl SoundpadGui {
         audio_player_state_local.mic_gain = 1.0;
 
         let tray_handle = start_tray();
-        let hotkey_manager = HotkeyManager::new();
+        let hotkey_manager = HotkeyManager::new(&config.hotkeys);
 
         SoundpadGui {
             app_state,
@@ -303,8 +303,23 @@ impl SoundpadGui {
         }
     }
 
+    pub fn set_output(&mut self, name: String) {
+        make_request_sync(Request::set_output(&name)).ok();
+
+        // Save output preference to daemon config
+        let mut daemon_config = get_daemon_config();
+        daemon_config.default_output_name = Some(name);
+        daemon_config.save_to_file().ok();
+    }
+
     pub fn toggle_loop(&mut self) {
         make_request_sync(Request::toggle_loop()).ok();
+    }
+
+    pub fn update_hotkeys(&mut self) {
+        if let Some(ref mut hk) = self.hotkey_manager {
+            hk.update_hotkeys(&self.config.hotkeys);
+        }
     }
 
     pub fn stop(&mut self) {
@@ -312,6 +327,26 @@ impl SoundpadGui {
         let mut guard = self.audio_player_state_shared.lock().unwrap();
         guard.new_state = Some(PlayerState::Stopped);
         guard.state = PlayerState::Stopped;
+    }
+
+    pub fn play_on_layer(&mut self, layer_index: usize, path: &PathBuf) {
+        if let Some(path_str) = path.to_str() {
+            if let Err(e) = make_request_sync(Request::play_on_layer(layer_index, path_str)) {
+                eprintln!("Failed to play on layer {}: {}", layer_index, e);
+            }
+        }
+    }
+
+    pub fn stop_layer(&mut self, layer_index: usize) {
+        if let Err(e) = make_request_sync(Request::stop_layer(layer_index)) {
+            eprintln!("Failed to stop layer {}: {}", layer_index, e);
+        }
+    }
+
+    pub fn stop_all_layers(&mut self) {
+        if let Err(e) = make_request_sync(Request::stop_all_layers()) {
+            eprintln!("Failed to stop all layers: {}", e);
+        }
     }
 
     pub fn toggle_favorite(&mut self, path: &PathBuf) {
@@ -325,6 +360,103 @@ impl SoundpadGui {
 
     pub fn is_favorite(&self, path: &PathBuf) -> bool {
         self.config.favorites.contains(path)
+    }
+
+    pub fn create_category(&mut self, name: &str) {
+        if !name.is_empty() && !self.config.categories.contains_key(name) {
+            use pwsp::types::config::SoundCategory;
+            self.config.categories.insert(name.to_string(), SoundCategory::new(name));
+            self.config.save_to_file().ok();
+        }
+    }
+
+    pub fn delete_category(&mut self, name: &str) {
+        self.config.categories.remove(name);
+        if self.app_state.current_category.as_deref() == Some(name) {
+            self.app_state.current_category = None;
+        }
+        self.config.save_to_file().ok();
+    }
+
+    pub fn rename_category(&mut self, old_name: &str, new_name: &str) {
+        if !new_name.is_empty() && !self.config.categories.contains_key(new_name) {
+            if let Some(mut category) = self.config.categories.remove(old_name) {
+                category.name = new_name.to_string();
+                self.config.categories.insert(new_name.to_string(), category);
+                if self.app_state.current_category.as_deref() == Some(old_name) {
+                    self.app_state.current_category = Some(new_name.to_string());
+                }
+                self.config.save_to_file().ok();
+            }
+        }
+    }
+
+    pub fn add_to_category(&mut self, category_name: &str, path: &PathBuf) {
+        if let Some(category) = self.config.categories.get_mut(category_name) {
+            category.add_sound(path.clone());
+            self.config.save_to_file().ok();
+        }
+    }
+
+    pub fn remove_from_category(&mut self, category_name: &str, path: &PathBuf) {
+        if let Some(category) = self.config.categories.get_mut(category_name) {
+            category.remove_sound(path);
+            self.config.save_to_file().ok();
+        }
+    }
+
+    pub fn open_category(&mut self, name: &str) {
+        self.app_state.current_category = Some(name.to_string());
+        self.app_state.current_dir = None;
+        self.app_state.files.clear();
+    }
+
+    pub fn get_sound_metadata(&self, path: &PathBuf) -> Option<&pwsp::types::config::SoundMetadata> {
+        self.config.sound_metadata.get(path)
+    }
+
+    pub fn set_sound_custom_name(&mut self, path: &PathBuf, name: Option<String>) {
+        let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
+        metadata.custom_name = name.filter(|s| !s.is_empty());
+        if metadata.is_empty() {
+            self.config.sound_metadata.remove(path);
+        }
+        self.config.save_to_file().ok();
+    }
+
+    pub fn set_sound_description(&mut self, path: &PathBuf, description: Option<String>) {
+        let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
+        metadata.description = description.filter(|s| !s.is_empty());
+        if metadata.is_empty() {
+            self.config.sound_metadata.remove(path);
+        }
+        self.config.save_to_file().ok();
+    }
+
+    pub fn add_sound_tag(&mut self, path: &PathBuf, tag: &str) {
+        let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
+        metadata.add_tag(tag);
+        self.config.save_to_file().ok();
+    }
+
+    pub fn remove_sound_tag(&mut self, path: &PathBuf, tag: &str) {
+        if let Some(metadata) = self.config.sound_metadata.get_mut(path) {
+            metadata.remove_tag(tag);
+            if metadata.is_empty() {
+                self.config.sound_metadata.remove(path);
+            }
+            self.config.save_to_file().ok();
+        }
+    }
+
+    pub fn get_all_tags(&self) -> Vec<String> {
+        let mut all_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for metadata in self.config.sound_metadata.values() {
+            all_tags.extend(metadata.tags.iter().cloned());
+        }
+        let mut tags: Vec<_> = all_tags.into_iter().collect();
+        tags.sort();
+        tags
     }
 }
 

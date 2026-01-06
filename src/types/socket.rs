@@ -108,6 +108,18 @@ impl Request {
         Request::new("set_input", vec![("input_name", name)])
     }
 
+    pub fn get_output() -> Self {
+        Request::new("get_output", vec![])
+    }
+
+    pub fn get_outputs() -> Self {
+        Request::new("get_outputs", vec![])
+    }
+
+    pub fn set_output(name: &str) -> Self {
+        Request::new("set_output", vec![("output_name", name)])
+    }
+
     pub fn get_loop() -> Self {
         Request::new("get_loop", vec![])
     }
@@ -118,6 +130,33 @@ impl Request {
 
     pub fn toggle_loop() -> Self {
         Request::new("toggle_loop", vec![])
+    }
+
+    // Layer commands
+    pub fn play_on_layer(layer_index: usize, file_path: &str) -> Self {
+        Request::new("play_on_layer", vec![
+            ("layer_index", &layer_index.to_string()),
+            ("file_path", file_path),
+        ])
+    }
+
+    pub fn stop_layer(layer_index: usize) -> Self {
+        Request::new("stop_layer", vec![("layer_index", &layer_index.to_string())])
+    }
+
+    pub fn stop_all_layers() -> Self {
+        Request::new("stop_all_layers", vec![])
+    }
+
+    pub fn set_layer_volume(layer_index: usize, volume: f32) -> Self {
+        Request::new("set_layer_volume", vec![
+            ("layer_index", &layer_index.to_string()),
+            ("volume", &volume.to_string()),
+        ])
+    }
+
+    pub fn get_layers_info() -> Self {
+        Request::new("get_layers_info", vec![])
     }
 }
 

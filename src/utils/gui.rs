@@ -1,6 +1,6 @@
 use crate::{
     types::{
-        audio_player::PlayerState,
+        audio_player::{LayerInfo, PlayerState},
         config::GuiConfig,
         gui::AudioPlayerState,
         socket::{Request, Response},
@@ -59,7 +59,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             let duration_req = Request::get_duration();
             let current_input_req = Request::get_input();
             let all_inputs_req = Request::get_inputs();
+            let current_output_req = Request::get_output();
+            let all_outputs_req = Request::get_outputs();
             let looped_req = Request::get_loop();
+            let layers_info_req = Request::get_layers_info();
 
             let (
                 state_res,
@@ -72,7 +75,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 duration_res,
                 current_input_res,
                 all_inputs_res,
+                current_output_res,
+                all_outputs_res,
                 looped_res,
+                layers_info_res,
             ) = tokio::join!(
                 make_request(state_req),
                 make_request(file_path_req),
@@ -84,7 +90,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 make_request(duration_req),
                 make_request(current_input_req),
                 make_request(all_inputs_req),
+                make_request(current_output_req),
+                make_request(all_outputs_req),
                 make_request(looped_req),
+                make_request(layers_info_req),
             );
 
             let state_res = state_res.unwrap_or_default();
@@ -97,7 +106,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             let duration_res = duration_res.unwrap_or_default();
             let current_input_res = current_input_res.unwrap_or_default();
             let all_inputs_res = all_inputs_res.unwrap_or_default();
+            let current_output_res = current_output_res.unwrap_or_default();
+            let all_outputs_res = all_outputs_res.unwrap_or_default();
             let looped_res = looped_res.unwrap_or_default();
+            let layers_info_res = layers_info_res.unwrap_or_default();
 
             let state = match state_res.status {
                 true => serde_json::from_str::<PlayerState>(&state_res.message)
@@ -160,9 +172,33 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                     .collect::<HashMap<String, String>>(),
                 false => HashMap::new(),
             };
+            let current_output = match current_output_res.status {
+                true => current_output_res.message,
+                false => String::new(),
+            };
+            let all_outputs = match all_outputs_res.status {
+                true => all_outputs_res
+                    .message
+                    .as_str()
+                    .split(';')
+                    .filter_map(|entry| {
+                        let entry = entry.trim();
+                        if entry.is_empty() {
+                            return None;
+                        }
+                        Some((entry.to_string(), entry.to_string()))
+                    })
+                    .collect::<HashMap<String, String>>(),
+                false => HashMap::new(),
+            };
             let looped = match looped_res.status {
                 true => looped_res.message.parse::<bool>().unwrap_or_default(),
                 false => false,
+            };
+            let layers = match layers_info_res.status {
+                true => serde_json::from_str::<Vec<LayerInfo>>(&layers_info_res.message)
+                    .unwrap_or_default(),
+                false => Vec::new(),
             };
 
             {
@@ -178,7 +214,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 guard.duration = if duration > 0.0 { duration } else { 1.0 };
                 guard.current_input = current_input;
                 guard.all_inputs = all_inputs;
+                guard.current_output = current_output;
+                guard.all_outputs = all_outputs;
                 guard.looped = looped;
+                guard.layers = layers;
             }
 
             sleep(sleep_duration).await;

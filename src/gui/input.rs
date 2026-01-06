@@ -1,8 +1,68 @@
 use crate::gui::SoundpadGui;
+use crate::gui::draw::create_hotkey_binding;
 use egui::{Context, Key};
+use pwsp::types::gui::HotkeyRecording;
 
 impl SoundpadGui {
     pub fn handle_input(&mut self, ctx: &Context) {
+        // Handle hotkey recording first (captures all key input when recording)
+        if self.app_state.recording_hotkey.is_some() {
+            let mut recorded_binding = None;
+            let mut cancel_recording = false;
+
+            ctx.input(|i| {
+                // Cancel on Escape
+                if i.key_pressed(Key::Escape) {
+                    cancel_recording = true;
+                    return;
+                }
+
+                // Look for a key press (non-modifier)
+                for key in [
+                    Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I,
+                    Key::J, Key::K, Key::L, Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R,
+                    Key::S, Key::T, Key::U, Key::V, Key::W, Key::X, Key::Y, Key::Z,
+                    Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4,
+                    Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9,
+                    Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6,
+                    Key::F7, Key::F8, Key::F9, Key::F10, Key::F11, Key::F12,
+                    Key::Space, Key::Enter, Key::Backspace, Key::Tab, Key::Delete,
+                    Key::Insert, Key::Home, Key::End, Key::PageUp, Key::PageDown,
+                    Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft, Key::ArrowRight,
+                    Key::Minus, Key::Equals, Key::OpenBracket, Key::CloseBracket,
+                    Key::Backslash, Key::Semicolon, Key::Quote, Key::Comma,
+                    Key::Period, Key::Slash, Key::Backtick,
+                ] {
+                    if i.key_pressed(key) {
+                        recorded_binding = create_hotkey_binding(key, i.modifiers);
+                        break;
+                    }
+                }
+            });
+
+            if cancel_recording {
+                self.app_state.recording_hotkey = None;
+                return;
+            }
+
+            if let Some(binding) = recorded_binding {
+                match self.app_state.recording_hotkey {
+                    Some(HotkeyRecording::PlayPause) => {
+                        self.config.hotkeys.play_pause = Some(binding);
+                    }
+                    Some(HotkeyRecording::Stop) => {
+                        self.config.hotkeys.stop = Some(binding);
+                    }
+                    None => {}
+                }
+                self.app_state.recording_hotkey = None;
+                self.config.save_to_file().ok();
+                self.update_hotkeys();
+            }
+
+            return; // Don't process other input while recording
+        }
+
         if ctx.memory(|reader| reader.focused().is_some()) {
             return;
         }

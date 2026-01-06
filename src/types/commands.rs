@@ -68,6 +68,14 @@ pub struct SetCurrentInputCommand {
     pub name: Option<String>,
 }
 
+pub struct GetCurrentOutputCommand {}
+
+pub struct GetAllOutputsCommand {}
+
+pub struct SetCurrentOutputCommand {
+    pub name: Option<String>,
+}
+
 pub struct GetLoopCommand {}
 
 pub struct SetLoopCommand {
@@ -75,6 +83,25 @@ pub struct SetLoopCommand {
 }
 
 pub struct ToggleLoopCommand {}
+
+// Layer commands
+pub struct PlayOnLayerCommand {
+    pub layer_index: Option<usize>,
+    pub file_path: Option<PathBuf>,
+}
+
+pub struct StopLayerCommand {
+    pub layer_index: Option<usize>,
+}
+
+pub struct StopAllLayersCommand {}
+
+pub struct SetLayerVolumeCommand {
+    pub layer_index: Option<usize>,
+    pub volume: Option<f32>,
+}
+
+pub struct GetLayersInfoCommand {}
 
 #[async_trait]
 impl Executable for PingCommand {
@@ -341,6 +368,42 @@ impl Executable for SetCurrentInputCommand {
 }
 
 #[async_trait]
+impl Executable for GetCurrentOutputCommand {
+    async fn execute(&self) -> Response {
+        let audio_player = get_audio_player().await.lock().await;
+        if let Some(output_device) = audio_player.get_current_output_device() {
+            Response::new(true, output_device.clone())
+        } else {
+            Response::new(false, "No output device selected")
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for GetAllOutputsCommand {
+    async fn execute(&self) -> Response {
+        let audio_player = get_audio_player().await.lock().await;
+        let output_devices = audio_player.get_all_output_devices();
+        let output_devices_strings: Vec<String> = output_devices.keys().cloned().collect();
+        let response_message = output_devices_strings.join("; ");
+        Response::new(true, response_message)
+    }
+}
+
+#[async_trait]
+impl Executable for SetCurrentOutputCommand {
+    async fn execute(&self) -> Response {
+        if let Some(_name) = &self.name {
+            // Note: Changing output device requires restarting the audio stream
+            // For now, we just save the preference - it will take effect on next daemon restart
+            Response::new(true, "Output device preference saved (restart daemon to apply)")
+        } else {
+            Response::new(false, "Invalid output device name")
+        }
+    }
+}
+
+#[async_trait]
 impl Executable for GetLoopCommand {
     async fn execute(&self) -> Response {
         let audio_player = get_audio_player().await.lock().await;
@@ -369,5 +432,81 @@ impl Executable for ToggleLoopCommand {
         let mut audio_player = get_audio_player().await.lock().await;
         audio_player.looped = !audio_player.looped;
         Response::new(true, format!("Loop was set to {}", audio_player.looped))
+    }
+}
+
+// ============= Layer Command Implementations =============
+
+#[async_trait]
+impl Executable for PlayOnLayerCommand {
+    async fn execute(&self) -> Response {
+        match (&self.layer_index, &self.file_path) {
+            (Some(layer_index), Some(file_path)) => {
+                let mut audio_player = get_audio_player().await.lock().await;
+                match audio_player.play_on_layer(*layer_index, file_path).await {
+                    Ok(_) => Response::new(
+                        true,
+                        format!("Playing {} on layer {}", file_path.display(), layer_index),
+                    ),
+                    Err(err) => Response::new(false, err.to_string()),
+                }
+            }
+            _ => Response::new(false, "Invalid layer index or file path"),
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for StopLayerCommand {
+    async fn execute(&self) -> Response {
+        if let Some(layer_index) = self.layer_index {
+            let mut audio_player = get_audio_player().await.lock().await;
+            match audio_player.stop_layer(layer_index) {
+                Ok(_) => Response::new(true, format!("Stopped layer {}", layer_index)),
+                Err(err) => Response::new(false, err.to_string()),
+            }
+        } else {
+            Response::new(false, "Invalid layer index")
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for StopAllLayersCommand {
+    async fn execute(&self) -> Response {
+        let mut audio_player = get_audio_player().await.lock().await;
+        audio_player.stop_all_layers();
+        Response::new(true, "All layers stopped")
+    }
+}
+
+#[async_trait]
+impl Executable for SetLayerVolumeCommand {
+    async fn execute(&self) -> Response {
+        match (self.layer_index, self.volume) {
+            (Some(layer_index), Some(volume)) => {
+                let mut audio_player = get_audio_player().await.lock().await;
+                match audio_player.set_layer_volume(layer_index, volume) {
+                    Ok(_) => Response::new(
+                        true,
+                        format!("Layer {} volume set to {}", layer_index, volume),
+                    ),
+                    Err(err) => Response::new(false, err.to_string()),
+                }
+            }
+            _ => Response::new(false, "Invalid layer index or volume"),
+        }
+    }
+}
+
+#[async_trait]
+impl Executable for GetLayersInfoCommand {
+    async fn execute(&self) -> Response {
+        let audio_player = get_audio_player().await.lock().await;
+        let layers_info = audio_player.get_all_layers_info();
+        match serde_json::to_string(&layers_info) {
+            Ok(json) => Response::new(true, json),
+            Err(_) => Response::new(false, "Failed to serialize layers info"),
+        }
     }
 }

@@ -77,6 +77,12 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
             let name = Some(request.args.get("input_name").unwrap_or(&String::new())).cloned();
             Some(Box::new(SetCurrentInputCommand { name }))
         }
+        "get_output" => Some(Box::new(GetCurrentOutputCommand {})),
+        "get_outputs" => Some(Box::new(GetAllOutputsCommand {})),
+        "set_output" => {
+            let name = Some(request.args.get("output_name").unwrap_or(&String::new())).cloned();
+            Some(Box::new(SetCurrentOutputCommand { name }))
+        }
         "get_loop" => Some(Box::new(GetLoopCommand {})),
         "set_loop" => {
             let enabled = request
@@ -88,6 +94,48 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
             Some(Box::new(SetLoopCommand { enabled }))
         }
         "toggle_loop" => Some(Box::new(ToggleLoopCommand {})),
+        // Layer commands
+        "play_on_layer" => {
+            let layer_index = request
+                .args
+                .get("layer_index")
+                .unwrap_or(&String::new())
+                .parse::<usize>()
+                .ok();
+            let file_path = request
+                .args
+                .get("file_path")
+                .unwrap_or(&String::new())
+                .parse::<PathBuf>()
+                .ok();
+            Some(Box::new(PlayOnLayerCommand { layer_index, file_path }))
+        }
+        "stop_layer" => {
+            let layer_index = request
+                .args
+                .get("layer_index")
+                .unwrap_or(&String::new())
+                .parse::<usize>()
+                .ok();
+            Some(Box::new(StopLayerCommand { layer_index }))
+        }
+        "stop_all_layers" => Some(Box::new(StopAllLayersCommand {})),
+        "set_layer_volume" => {
+            let layer_index = request
+                .args
+                .get("layer_index")
+                .unwrap_or(&String::new())
+                .parse::<usize>()
+                .ok();
+            let volume = request
+                .args
+                .get("volume")
+                .unwrap_or(&String::new())
+                .parse::<f32>()
+                .ok();
+            Some(Box::new(SetLayerVolumeCommand { layer_index, volume }))
+        }
+        "get_layers_info" => Some(Box::new(GetLayersInfoCommand {})),
         _ => None,
     }
 }

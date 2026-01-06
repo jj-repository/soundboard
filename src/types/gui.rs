@@ -1,4 +1,4 @@
-use crate::types::audio_player::PlayerState;
+use crate::types::audio_player::{LayerInfo, PlayerState};
 
 use egui::Id;
 
@@ -27,6 +27,13 @@ pub enum UpdateStatus {
     Error(String),
 }
 
+/// Which hotkey is currently being recorded
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyRecording {
+    PlayPause,
+    Stop,
+}
+
 #[derive(Default, Debug)]
 pub struct AppState {
     pub search_query: String,
@@ -53,6 +60,25 @@ pub struct AppState {
     pub force_focus_id: Option<Id>,
 
     pub update_status: UpdateStatus,
+
+    /// Currently recording hotkey (if any)
+    pub recording_hotkey: Option<HotkeyRecording>,
+
+    /// Currently selected category (if viewing a category instead of a directory)
+    pub current_category: Option<String>,
+    /// Whether the "new category" dialog is open
+    pub show_new_category_dialog: bool,
+    /// Input text for new category name
+    pub new_category_name: String,
+    /// Category being edited (for rename)
+    pub editing_category: Option<String>,
+
+    /// File being edited for metadata (shows popup)
+    pub editing_metadata_file: Option<PathBuf>,
+    /// Current tag input text
+    pub tag_input: String,
+    /// Search filter by tag (when set, only show files with this tag)
+    pub filter_by_tag: Option<String>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -76,4 +102,8 @@ pub struct AudioPlayerState {
 
     pub current_input: String,
     pub all_inputs: HashMap<String, String>,
+    pub current_output: String,
+    pub all_outputs: HashMap<String, String>,
+
+    pub layers: Vec<LayerInfo>,
 }
