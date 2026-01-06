@@ -41,6 +41,12 @@ impl App for SoundpadGui {
                 return;
             }
 
+            // Show sounds folder setup wizard if needed
+            if self.app_state.show_sounds_folder_setup {
+                self.draw_sounds_folder_setup(ui);
+                return;
+            }
+
             if self.app_state.show_settings {
                 self.draw_settings(ui);
                 return;

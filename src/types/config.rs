@@ -122,6 +122,9 @@ pub struct SoundMetadata {
     /// Tags for filtering/organizing
     #[serde(default)]
     pub tags: HashSet<String>,
+    /// Individual volume for this sound (0.0 to 1.0, None = use global volume)
+    #[serde(default)]
+    pub volume: Option<f32>,
 }
 
 impl SoundMetadata {
@@ -145,7 +148,7 @@ impl SoundMetadata {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.custom_name.is_none() && self.description.is_none() && self.tags.is_empty()
+        self.custom_name.is_none() && self.description.is_none() && self.tags.is_empty() && self.volume.is_none()
     }
 }
 
@@ -201,6 +204,9 @@ pub struct GuiConfig {
     pub categories: HashMap<String, SoundCategory>,
     #[serde(default)]
     pub sound_metadata: HashMap<PathBuf, SoundMetadata>,
+    /// Path to the centralized sounds folder (None if not configured)
+    #[serde(default)]
+    pub sounds_folder: Option<PathBuf>,
 }
 
 impl Default for GuiConfig {
@@ -220,6 +226,7 @@ impl Default for GuiConfig {
             hotkeys: HotkeyConfig::default(),
             categories: HashMap::default(),
             sound_metadata: HashMap::default(),
+            sounds_folder: None,
         }
     }
 }

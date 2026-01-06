@@ -23,6 +23,83 @@ impl SoundpadGui {
         });
     }
 
+    pub fn draw_sounds_folder_setup(&mut self, ui: &mut Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(80.0);
+
+            ui.label(
+                RichText::new(format!("{} Welcome to PWSP!", icons::ICON_MUSIC_NOTE))
+                    .size(32.0)
+                    .color(Color32::WHITE),
+            );
+
+            ui.add_space(20.0);
+
+            ui.label(
+                RichText::new("Please select a folder to store your sounds.")
+                    .size(16.0),
+            );
+
+            ui.add_space(8.0);
+
+            ui.label(
+                RichText::new("All imported sounds will be copied to this folder.")
+                    .weak()
+                    .size(12.0),
+            );
+
+            ui.add_space(30.0);
+
+            // Show current selection if any
+            if let Some(ref path) = self.app_state.pending_sounds_folder {
+                ui.horizontal(|ui| {
+                    ui.label("Selected:");
+                    ui.label(
+                        RichText::new(path.display().to_string())
+                            .monospace()
+                            .color(Color32::LIGHT_BLUE),
+                    );
+                });
+                ui.add_space(15.0);
+            }
+
+            ui.horizontal(|ui| {
+                if ui.button(format!("{} Choose Folder...", icons::ICON_FOLDER_OPEN)).clicked() {
+                    let file_dialog = rfd::FileDialog::new();
+                    if let Some(path) = file_dialog.pick_folder() {
+                        self.app_state.pending_sounds_folder = Some(path);
+                    }
+                }
+            });
+
+            ui.add_space(25.0);
+
+            // Continue button (only enabled if folder selected)
+            let can_continue = self.app_state.pending_sounds_folder.is_some();
+
+            if ui
+                .add_enabled(can_continue, Button::new(format!("{} Continue", icons::ICON_CHECK)))
+                .clicked()
+            {
+                if let Some(path) = self.app_state.pending_sounds_folder.take() {
+                    self.set_sounds_folder(path);
+                    self.app_state.show_sounds_folder_setup = false;
+                }
+            }
+
+            ui.add_space(15.0);
+
+            // Skip for now option
+            if ui
+                .small_button("Skip for now")
+                .on_hover_text("You can set up the sounds folder later in Settings")
+                .clicked()
+            {
+                self.app_state.show_sounds_folder_setup = false;
+            }
+        });
+    }
+
     pub fn draw_settings(&mut self, ui: &mut Ui) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 5.0;
@@ -205,6 +282,40 @@ impl SoundpadGui {
                     .weak()
                     .size(11.0),
             );
+            // --------------------------------
+
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // --------- Sounds Folder Section ----------
+            ui.label(RichText::new("Sounds Folder").color(Color32::WHITE).monospace());
+            ui.add_space(5.0);
+
+            if let Some(ref path) = self.config.sounds_folder.clone() {
+                ui.horizontal(|ui| {
+                    ui.label("Location:");
+                    ui.label(
+                        RichText::new(path.display().to_string())
+                            .monospace()
+                            .size(11.0),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    if ui.button(format!("{} Change...", icons::ICON_FOLDER)).clicked() {
+                        self.pick_sounds_folder();
+                    }
+                    if ui.button(format!("{} Open Folder", icons::ICON_FOLDER_OPEN)).clicked() {
+                        self.open_sounds_folder();
+                    }
+                });
+            } else {
+                ui.label(RichText::new("Not configured").weak());
+                if ui.button(format!("{} Set Sounds Folder...", icons::ICON_FOLDER_OPEN)).clicked() {
+                    self.app_state.show_sounds_folder_setup = true;
+                }
+            }
             // --------------------------------
 
             ui.add_space(20.0);
@@ -523,6 +634,34 @@ impl SoundpadGui {
     }
 
     fn draw_body(&mut self, ui: &mut Ui) {
+        // Check if files are being hovered (drag-and-drop)
+        let is_hovering_files = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+
+        if is_hovering_files && self.config.sounds_folder.is_some() {
+            // Draw drop zone overlay
+            let rect = ui.available_rect_before_wrap();
+            ui.painter().rect_filled(
+                rect,
+                8.0,
+                Color32::from_rgba_unmultiplied(50, 100, 200, 120),
+            );
+            ui.painter().rect_stroke(
+                rect,
+                8.0,
+                egui::Stroke::new(3.0, Color32::LIGHT_BLUE),
+                egui::StrokeKind::Outside,
+            );
+
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    RichText::new(format!("{} Drop files to import", icons::ICON_FILE_DOWNLOAD))
+                        .size(28.0)
+                        .color(Color32::WHITE),
+                );
+            });
+            return;
+        }
+
         let dirs_size = Vec2::new(ui.available_width() / 4.0, ui.available_height() - 40.0);
 
         ui.horizontal(|ui| {
@@ -542,67 +681,30 @@ impl SoundpadGui {
             ScrollArea::vertical().id_salt(0).show(ui, |ui| {
                 ui.set_min_width(area_size.x);
 
-                // --------- Directories Section ----------
-                ui.label(RichText::new("Folders").weak().size(11.0));
+                // --------- Playlists Section ----------
+                ui.label(RichText::new("Playlists").weak().size(11.0));
                 ui.add_space(4.0);
 
-                let mut dirs: Vec<_> = self.app_state.dirs.iter().cloned().collect();
-                dirs.sort();
-                for path in &dirs {
-                    ui.horizontal(|ui| {
-                        let name = path
-                            .file_name()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.to_string_lossy().to_string());
-
-                        let mut dir_button_text = RichText::new(name);
-                        if self.app_state.current_category.is_none() {
-                            if let Some(current_dir) = &self.app_state.current_dir {
-                                if current_dir == path {
-                                    dir_button_text = dir_button_text.color(Color32::WHITE);
-                                }
-                            }
-                        }
-
-                        let dir_button =
-                            Button::new(dir_button_text.atom_max_width(area_size.x - 36.0)).frame(false);
-
-                        let dir_button_response = ui.add(dir_button);
-                        if dir_button_response.clicked() {
-                            self.app_state.current_category = None;
-                            self.open_dir(path);
-                        }
-
-                        let delete_dir_button = Button::new(icons::ICON_DELETE).frame(false);
-                        let delete_dir_button_response =
-                            ui.add_sized([18.0, 18.0], delete_dir_button);
-                        if delete_dir_button_response.clicked() {
-                            self.remove_dir(path);
-                        }
-                    });
+                // "All Sounds" - special virtual playlist (always first)
+                let is_all_sounds_selected = self.app_state.current_playlist.as_deref() == Some("All Sounds");
+                let mut all_sounds_text = RichText::new(format!("{} All Sounds", icons::ICON_LIBRARY_MUSIC));
+                if is_all_sounds_selected {
+                    all_sounds_text = all_sounds_text.color(Color32::LIGHT_GREEN);
                 }
 
-                ui.horizontal(|ui| {
-                    let add_dirs_button = Button::new(icons::ICON_ADD).frame(false);
-                    let add_dirs_button_response = ui.add_sized([18.0, 18.0], add_dirs_button);
-                    if add_dirs_button_response.clicked() {
-                        self.add_dirs();
-                    }
-                });
+                let all_sounds_button = Button::new(all_sounds_text.atom_max_width(area_size.x - 36.0)).frame(false);
+                if ui.add(all_sounds_button).clicked() {
+                    self.open_playlist("All Sounds");
+                }
 
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                // --------- Categories Section ----------
-                ui.label(RichText::new("Categories").weak().size(11.0));
                 ui.add_space(4.0);
 
-                let mut categories: Vec<_> = self.config.categories.keys().cloned().collect();
-                categories.sort();
+                // User-created playlists
+                let mut playlists: Vec<_> = self.config.categories.keys().cloned().collect();
+                playlists.sort();
 
-                for cat_name in &categories {
-                    let is_editing = self.app_state.editing_category.as_ref() == Some(cat_name);
+                for playlist_name in &playlists {
+                    let is_editing = self.app_state.editing_category.as_ref() == Some(playlist_name);
 
                     if is_editing {
                         // Show text input for renaming
@@ -613,10 +715,10 @@ impl SoundpadGui {
                             );
 
                             if response.lost_focus() {
-                                let old_name = cat_name.clone();
+                                let old_name = playlist_name.clone();
                                 let new_name = self.app_state.new_category_name.clone();
                                 if !new_name.is_empty() && new_name != old_name {
-                                    self.rename_category(&old_name, &new_name);
+                                    self.rename_playlist(&old_name, &new_name);
                                 }
                                 self.app_state.editing_category = None;
                                 self.app_state.new_category_name.clear();
@@ -624,19 +726,19 @@ impl SoundpadGui {
                         });
                     } else {
                         ui.horizontal(|ui| {
-                            let is_selected = self.app_state.current_category.as_ref() == Some(cat_name);
+                            let is_selected = self.app_state.current_playlist.as_deref() == Some(playlist_name);
 
-                            let mut cat_button_text = RichText::new(format!("{} {}", icons::ICON_FOLDER_SPECIAL, cat_name));
+                            let mut playlist_button_text = RichText::new(format!("{} {}", icons::ICON_QUEUE_MUSIC, playlist_name));
                             if is_selected {
-                                cat_button_text = cat_button_text.color(Color32::LIGHT_BLUE);
+                                playlist_button_text = playlist_button_text.color(Color32::LIGHT_BLUE);
                             }
 
-                            let cat_button =
-                                Button::new(cat_button_text.atom_max_width(area_size.x - 54.0)).frame(false);
+                            let playlist_button =
+                                Button::new(playlist_button_text.atom_max_width(area_size.x - 54.0)).frame(false);
 
-                            let cat_button_response = ui.add(cat_button);
-                            if cat_button_response.clicked() {
-                                self.open_category(cat_name);
+                            let playlist_button_response = ui.add(playlist_button);
+                            if playlist_button_response.clicked() {
+                                self.open_playlist(playlist_name);
                             }
 
                             // Edit button
@@ -645,33 +747,33 @@ impl SoundpadGui {
                             ).frame(false);
                             let edit_response = ui.add_sized([18.0, 18.0], edit_button);
                             if edit_response.clicked() {
-                                self.app_state.editing_category = Some(cat_name.clone());
-                                self.app_state.new_category_name = cat_name.clone();
+                                self.app_state.editing_category = Some(playlist_name.clone());
+                                self.app_state.new_category_name = playlist_name.clone();
                             }
 
                             // Delete button
-                            let delete_cat_button = Button::new(icons::ICON_DELETE).frame(false);
-                            let delete_cat_response = ui.add_sized([18.0, 18.0], delete_cat_button);
-                            if delete_cat_response.clicked() {
-                                self.delete_category(cat_name);
+                            let delete_playlist_button = Button::new(icons::ICON_DELETE).frame(false);
+                            let delete_playlist_response = ui.add_sized([18.0, 18.0], delete_playlist_button);
+                            if delete_playlist_response.clicked() {
+                                self.delete_playlist(playlist_name);
                             }
                         });
                     }
                 }
 
-                // Add category button or input
+                // Add playlist button or input
                 if self.app_state.show_new_category_dialog {
                     ui.horizontal(|ui| {
                         let response = ui.add(
                             TextEdit::singleline(&mut self.app_state.new_category_name)
-                                .hint_text("Category name")
+                                .hint_text("Playlist name")
                                 .desired_width(area_size.x - 54.0),
                         );
 
                         if response.lost_focus() {
                             if !self.app_state.new_category_name.is_empty() {
                                 let name = self.app_state.new_category_name.clone();
-                                self.create_category(&name);
+                                self.create_playlist(&name);
                             }
                             self.app_state.show_new_category_dialog = false;
                             self.app_state.new_category_name.clear();
@@ -684,9 +786,9 @@ impl SoundpadGui {
                     });
                 } else {
                     ui.horizontal(|ui| {
-                        let add_cat_button = Button::new(icons::ICON_ADD).frame(false);
-                        let add_cat_response = ui.add_sized([18.0, 18.0], add_cat_button);
-                        if add_cat_response.clicked() {
+                        let add_playlist_button = Button::new(icons::ICON_ADD).frame(false);
+                        let add_playlist_response = ui.add_sized([18.0, 18.0], add_playlist_button);
+                        if add_playlist_response.clicked() {
                             self.app_state.show_new_category_dialog = true;
                             self.app_state.new_category_name.clear();
                         }
@@ -694,10 +796,28 @@ impl SoundpadGui {
                 }
 
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    let play_file_button = Button::new("Play file");
+                    // Play file button (plays directly without importing)
+                    let play_file_button = Button::new(format!("{} Play file", icons::ICON_PLAY_ARROW));
                     let play_file_button_response = ui.add(play_file_button);
                     if play_file_button_response.clicked() {
                         self.open_file();
+                    }
+
+                    // Only show import buttons if sounds folder is configured
+                    if self.config.sounds_folder.is_some() {
+                        ui.add_space(4.0);
+
+                        // Import sound button
+                        let import_button = Button::new(format!("{} Add Sound", icons::ICON_ADD));
+                        if ui.add(import_button).on_hover_text("Import sound file to sounds folder").clicked() {
+                            self.import_sounds_dialog();
+                        }
+
+                        // Open sounds folder button
+                        let open_folder_button = Button::new(format!("{} Open Sounds Folder", icons::ICON_FOLDER_OPEN));
+                        if ui.add(open_folder_button).clicked() {
+                            self.open_sounds_folder();
+                        }
                     }
                 });
             });
@@ -741,12 +861,16 @@ impl SoundpadGui {
 
             ui.separator();
 
-            // Show category header if viewing a category
-            if let Some(ref cat_name) = self.app_state.current_category.clone() {
+            // Show playlist header if viewing a playlist
+            if let Some(ref playlist_name) = self.app_state.current_playlist.clone() {
+                let is_all_sounds = playlist_name == "All Sounds";
+                let icon = if is_all_sounds { icons::ICON_LIBRARY_MUSIC } else { icons::ICON_QUEUE_MUSIC };
+                let color = if is_all_sounds { Color32::LIGHT_GREEN } else { Color32::LIGHT_BLUE };
+
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("{} {}", icons::ICON_FOLDER_SPECIAL, cat_name))
-                            .color(Color32::LIGHT_BLUE)
+                        RichText::new(format!("{} {}", icon, playlist_name))
+                            .color(color)
                             .monospace(),
                     );
                 });
@@ -758,9 +882,52 @@ impl SoundpadGui {
                 ui.set_min_height(area_size.y);
 
                 ui.vertical(|ui| {
-                    // Check if viewing a category
-                    if let Some(ref cat_name) = self.app_state.current_category.clone() {
-                        // Draw category contents
+                    // Check if viewing a playlist
+                    if let Some(ref playlist_name) = self.app_state.current_playlist.clone() {
+                        // Draw playlist contents
+                        let mut files: Vec<_> = self.app_state.files.iter().cloned().collect();
+                        files.sort();
+
+                        let search_query = self.app_state.search_query.to_lowercase();
+                        let search_query = search_query.trim();
+
+                        if files.is_empty() {
+                            if playlist_name == "All Sounds" {
+                                ui.label(RichText::new("No sounds in your sounds folder").weak());
+                                ui.label(RichText::new("Use 'Add Sound' to import sounds").weak().size(11.0));
+                            } else {
+                                ui.label(RichText::new("No sounds in this playlist").weak());
+                                ui.label(RichText::new("Add sounds using the + button on files").weak().size(11.0));
+                            }
+                        } else {
+                            for entry_path in &files {
+                                let file_name = entry_path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy())
+                                    .unwrap_or_default();
+
+                                if !search_query.is_empty()
+                                    && !file_name.to_lowercase().contains(search_query)
+                                {
+                                    continue;
+                                }
+
+                                // Filter by tag if set
+                                if let Some(ref filter_tag) = self.app_state.filter_by_tag {
+                                    if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
+                                        if !metadata.has_tag(filter_tag) {
+                                            continue;
+                                        }
+                                    } else {
+                                        continue;
+                                    }
+                                }
+
+                                self.draw_playlist_file_row(ui, entry_path, &playlist_name);
+                            }
+                        }
+                    } else if let Some(ref cat_name) = self.app_state.current_category.clone() {
+                        // Draw category contents (legacy support)
                         if let Some(category) = self.config.categories.get(cat_name) {
                             let sounds = category.sounds.clone();
                             let search_query = self.app_state.search_query.to_lowercase();
@@ -1203,6 +1370,199 @@ impl SoundpadGui {
             if file_button_response.clicked() && entry_path.exists() {
                 self.play_file(entry_path);
                 self.app_state.selected_file = Some(entry_path.clone());
+            }
+        });
+    }
+
+    fn draw_playlist_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str) {
+        let is_all_sounds = playlist_name == "All Sounds";
+
+        // Get display name (custom name or filename)
+        let display_name = self.config.sound_metadata.get(entry_path)
+            .and_then(|m| m.custom_name.clone())
+            .unwrap_or_else(|| {
+                entry_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
+
+        let is_favorite = self.is_favorite(entry_path);
+
+        ui.horizontal(|ui| {
+            // Favorite toggle button (star icon)
+            let star_icon = if is_favorite {
+                RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+            } else {
+                RichText::new(icons::ICON_STAR_BORDER).size(14.0)
+            };
+            let star_button = Button::new(star_icon).frame(false);
+            let star_response = ui.add_sized([18.0, 18.0], star_button);
+            if star_response.clicked() {
+                self.toggle_favorite(&entry_path.clone());
+            }
+            let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+            if star_response.hovered() {
+                star_response.on_hover_text(hover_text);
+            }
+
+            // Preview button (speakers only)
+            let preview_button =
+                Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
+                    .frame(false);
+            let preview_response = ui.add_sized([18.0, 18.0], preview_button);
+            if preview_response.clicked() {
+                self.preview_file(entry_path);
+            }
+            if preview_response.hovered() {
+                preview_response.on_hover_text("Preview (speakers only)");
+            }
+
+            // Add to playlist button (context menu)
+            if is_all_sounds {
+                let add_to_playlist_button =
+                    Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0))
+                        .frame(false);
+                let add_response = ui.add_sized([18.0, 18.0], add_to_playlist_button);
+
+                add_response.context_menu(|ui| {
+                    ui.label(RichText::new("Add to playlist:").weak().size(11.0));
+                    ui.separator();
+                    let mut playlists: Vec<_> = self.config.categories.keys().cloned().collect();
+                    playlists.sort();
+                    if playlists.is_empty() {
+                        ui.label(RichText::new("No playlists yet").weak().size(11.0));
+                    } else {
+                        for pl_name in &playlists {
+                            if ui.button(pl_name).clicked() {
+                                self.add_to_playlist(pl_name, entry_path);
+                                ui.close();
+                            }
+                        }
+                    }
+                });
+
+                if add_response.hovered() {
+                    add_response.on_hover_text("Add to playlist (right-click)");
+                }
+            }
+
+            // Edit metadata button
+            let edit_button =
+                Button::new(RichText::new(icons::ICON_LABEL).size(14.0))
+                    .frame(false);
+            let edit_response = ui.add_sized([18.0, 18.0], edit_button);
+            if edit_response.clicked() {
+                self.app_state.editing_metadata_file = Some(entry_path.clone());
+                self.app_state.tag_input.clear();
+            }
+            if edit_response.hovered() {
+                edit_response.on_hover_text("Edit tags & metadata");
+            }
+
+            // Play on layer button
+            let layer_button =
+                Button::new(RichText::new(icons::ICON_LAYERS).size(14.0))
+                    .frame(false);
+            let layer_response = ui.add_sized([18.0, 18.0], layer_button);
+
+            layer_response.context_menu(|ui| {
+                ui.label(RichText::new("Play on layer:").weak().size(11.0));
+                ui.separator();
+                for i in 0..4 {
+                    if ui.button(format!("Layer {}", i + 1)).clicked() {
+                        self.play_on_layer(i, entry_path);
+                        ui.close();
+                    }
+                }
+            });
+
+            if layer_response.hovered() {
+                layer_response.on_hover_text("Play on layer (right-click)");
+            }
+
+            // Individual volume slider
+            let current_volume = self.get_sound_volume(entry_path).unwrap_or(1.0);
+            let has_custom_volume = self.get_sound_volume(entry_path).is_some();
+
+            // Volume icon (shows if custom volume is set)
+            let vol_icon = if has_custom_volume {
+                RichText::new(icons::ICON_VOLUME_DOWN).size(14.0).color(Color32::LIGHT_BLUE)
+            } else {
+                RichText::new(icons::ICON_VOLUME_MUTE).size(14.0).weak()
+            };
+            let vol_button = Button::new(vol_icon).frame(false);
+            let vol_response = ui.add_sized([18.0, 18.0], vol_button);
+
+            // Right-click to reset to global volume
+            if vol_response.secondary_clicked() && has_custom_volume {
+                self.set_sound_volume(&entry_path.clone(), None);
+            }
+
+            vol_response.on_hover_text(if has_custom_volume {
+                format!("Volume: {:.0}% (right-click to reset)", current_volume * 100.0)
+            } else {
+                "Volume: using global (drag slider to set)".to_string()
+            });
+
+            // Compact volume slider
+            let mut vol = current_volume;
+            let slider = Slider::new(&mut vol, 0.0..=1.0)
+                .show_value(false)
+                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+            let slider_response = ui.add_sized([60.0, 14.0], slider);
+
+            if slider_response.changed() {
+                self.set_sound_volume(&entry_path.clone(), Some(vol));
+            }
+
+            // Remove/Delete button
+            let (remove_icon, remove_color, remove_tooltip) = if is_all_sounds {
+                (icons::ICON_DELETE, Color32::LIGHT_RED, "Delete from sounds folder")
+            } else {
+                (icons::ICON_REMOVE_CIRCLE_OUTLINE, Color32::LIGHT_RED, "Remove from playlist")
+            };
+            let remove_button =
+                Button::new(RichText::new(remove_icon).size(14.0).color(remove_color))
+                    .frame(false);
+            let remove_response = ui.add_sized([18.0, 18.0], remove_button);
+            if remove_response.clicked() {
+                self.remove_from_playlist(playlist_name, entry_path);
+            }
+            if remove_response.hovered() {
+                remove_response.on_hover_text(remove_tooltip);
+            }
+
+            // File name button (play through virtual mic)
+            let mut file_button_text = RichText::new(&display_name);
+            if let Some(current_file) = &self.app_state.selected_file {
+                if current_file == entry_path {
+                    file_button_text = file_button_text.color(Color32::WHITE);
+                }
+            }
+
+            // Show warning if file doesn't exist
+            if !entry_path.exists() {
+                file_button_text = file_button_text.color(Color32::DARK_RED).strikethrough();
+            }
+
+            let file_button = Button::new(file_button_text).frame(false);
+            let file_button_response = ui.add(file_button);
+            if file_button_response.clicked() && entry_path.exists() {
+                self.play_file(entry_path);
+                self.app_state.selected_file = Some(entry_path.clone());
+            }
+
+            // Show tags if any
+            if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
+                if !metadata.tags.is_empty() {
+                    ui.add_space(4.0);
+                    let tags_text: Vec<String> = metadata.tags.iter()
+                        .take(3)
+                        .map(|t| format!("#{}", t))
+                        .collect();
+                    ui.label(RichText::new(tags_text.join(" ")).weak().size(10.0));
+                }
             }
         });
     }

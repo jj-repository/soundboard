@@ -30,8 +30,8 @@ use std::{
     thread,
 };
 
-const SUPPORTED_EXTENSIONS: [&str; 11] = [
-    "mp3", "wav", "ogg", "flac", "mp4", "m4a", "aac", "mov", "mkv", "webm", "avi",
+const SUPPORTED_EXTENSIONS: [&str; 13] = [
+    "mp3", "wav", "ogg", "flac", "mp4", "m4a", "aac", "mov", "mkv", "webm", "avi", "opus", "wma",
 ];
 
 struct SoundpadGui {
@@ -56,6 +56,14 @@ impl SoundpadGui {
         app_state.dirs = config.dirs.clone();
         app_state.gain_slider_value = 1.0;
         app_state.mic_gain_slider_value = 1.0;
+
+        // Check if sounds folder setup is needed
+        if config.sounds_folder.is_none() {
+            app_state.show_sounds_folder_setup = true;
+        } else {
+            // Auto-select "All Sounds" playlist
+            app_state.current_playlist = Some("All Sounds".to_string());
+        }
 
         let mut audio_player_state_local = AudioPlayerState::default();
         audio_player_state_local.gain = 1.0;
@@ -238,30 +246,6 @@ impl SoundpadGui {
         }
     }
 
-    pub fn add_dirs(&mut self) {
-        let file_dialog = FileDialog::new();
-        if let Some(paths) = file_dialog.pick_folders() {
-            for path in paths {
-                self.app_state.dirs.insert(path);
-            }
-            self.save_dirs_config();
-        }
-    }
-
-    pub fn remove_dir(&mut self, path: &PathBuf) {
-        self.app_state.dirs.remove(path);
-        if self.app_state.current_dir.as_ref() == Some(path) {
-            self.app_state.current_dir = None;
-            self.app_state.files.clear();
-        }
-        self.save_dirs_config();
-    }
-
-    fn save_dirs_config(&mut self) {
-        self.config.dirs = self.app_state.dirs.clone();
-        self.config.save_to_file().ok();
-    }
-
     pub fn open_dir(&mut self, path: &PathBuf) {
         self.app_state.current_dir = Some(path.clone());
         self.app_state.files = match path.read_dir() {
@@ -274,6 +258,15 @@ impl SoundpadGui {
     }
 
     pub fn play_file(&mut self, path: &PathBuf) {
+        // Apply per-sound volume if set
+        if let Some(sound_volume) = self.get_sound_volume(path) {
+            make_request_sync(Request::set_volume(sound_volume)).ok();
+            // Update local state to reflect the volume change
+            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            guard.volume = sound_volume;
+            guard.new_volume = Some(sound_volume);
+        }
+
         if let Some(path_str) = path.to_str() {
             if let Err(e) = make_request_sync(Request::play(path_str)) {
                 eprintln!("Failed to send play request: {}", e);
@@ -334,6 +327,10 @@ impl SoundpadGui {
             if let Err(e) = make_request_sync(Request::play_on_layer(layer_index, path_str)) {
                 eprintln!("Failed to play on layer {}: {}", layer_index, e);
             }
+            // Apply per-sound volume to the layer if set
+            if let Some(sound_volume) = self.get_sound_volume(path) {
+                make_request_sync(Request::set_layer_volume(layer_index, sound_volume)).ok();
+            }
         }
     }
 
@@ -362,35 +359,6 @@ impl SoundpadGui {
         self.config.favorites.contains(path)
     }
 
-    pub fn create_category(&mut self, name: &str) {
-        if !name.is_empty() && !self.config.categories.contains_key(name) {
-            use pwsp::types::config::SoundCategory;
-            self.config.categories.insert(name.to_string(), SoundCategory::new(name));
-            self.config.save_to_file().ok();
-        }
-    }
-
-    pub fn delete_category(&mut self, name: &str) {
-        self.config.categories.remove(name);
-        if self.app_state.current_category.as_deref() == Some(name) {
-            self.app_state.current_category = None;
-        }
-        self.config.save_to_file().ok();
-    }
-
-    pub fn rename_category(&mut self, old_name: &str, new_name: &str) {
-        if !new_name.is_empty() && !self.config.categories.contains_key(new_name) {
-            if let Some(mut category) = self.config.categories.remove(old_name) {
-                category.name = new_name.to_string();
-                self.config.categories.insert(new_name.to_string(), category);
-                if self.app_state.current_category.as_deref() == Some(old_name) {
-                    self.app_state.current_category = Some(new_name.to_string());
-                }
-                self.config.save_to_file().ok();
-            }
-        }
-    }
-
     pub fn add_to_category(&mut self, category_name: &str, path: &PathBuf) {
         if let Some(category) = self.config.categories.get_mut(category_name) {
             category.add_sound(path.clone());
@@ -405,28 +373,140 @@ impl SoundpadGui {
         }
     }
 
-    pub fn open_category(&mut self, name: &str) {
-        self.app_state.current_category = Some(name.to_string());
+    // ============= Playlist Methods =============
+
+    /// Open a playlist (either "All Sounds" or a user-created playlist)
+    pub fn open_playlist(&mut self, name: &str) {
+        self.app_state.current_playlist = Some(name.to_string());
+        self.app_state.current_category = None;
         self.app_state.current_dir = None;
-        self.app_state.files.clear();
+
+        if name == "All Sounds" {
+            // Load all files from sounds folder
+            self.load_all_sounds();
+        } else {
+            // Load files from the playlist
+            self.app_state.files.clear();
+            if let Some(playlist) = self.config.categories.get(name) {
+                for path in &playlist.sounds {
+                    if path.exists() {
+                        self.app_state.files.insert(path.clone());
+                    }
+                }
+            }
+        }
     }
 
-    pub fn get_sound_metadata(&self, path: &PathBuf) -> Option<&pwsp::types::config::SoundMetadata> {
-        self.config.sound_metadata.get(path)
+    /// Load all sounds from the sounds folder
+    fn load_all_sounds(&mut self) {
+        self.app_state.files.clear();
+        if let Some(ref sounds_folder) = self.config.sounds_folder {
+            if let Ok(entries) = sounds_folder.read_dir() {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.is_file() {
+                        // Check if it's a supported audio file
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                                self.app_state.files.insert(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Create a new playlist
+    pub fn create_playlist(&mut self, name: &str) {
+        if !name.is_empty() && name != "All Sounds" && !self.config.categories.contains_key(name) {
+            use pwsp::types::config::SoundCategory;
+            self.config.categories.insert(name.to_string(), SoundCategory::new(name));
+            self.config.save_to_file().ok();
+        }
+    }
+
+    /// Delete a playlist
+    pub fn delete_playlist(&mut self, name: &str) {
+        self.config.categories.remove(name);
+        if self.app_state.current_playlist.as_deref() == Some(name) {
+            self.app_state.current_playlist = None;
+            self.app_state.files.clear();
+        }
+        self.config.save_to_file().ok();
+    }
+
+    /// Rename a playlist
+    pub fn rename_playlist(&mut self, old_name: &str, new_name: &str) {
+        if !new_name.is_empty() && new_name != "All Sounds" && !self.config.categories.contains_key(new_name) {
+            if let Some(mut playlist) = self.config.categories.remove(old_name) {
+                playlist.name = new_name.to_string();
+                self.config.categories.insert(new_name.to_string(), playlist);
+                if self.app_state.current_playlist.as_deref() == Some(old_name) {
+                    self.app_state.current_playlist = Some(new_name.to_string());
+                }
+                self.config.save_to_file().ok();
+            }
+        }
+    }
+
+    /// Add a sound to a playlist
+    pub fn add_to_playlist(&mut self, playlist_name: &str, path: &PathBuf) {
+        if playlist_name == "All Sounds" {
+            return; // Can't manually add to All Sounds
+        }
+        if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
+            playlist.add_sound(path.clone());
+            self.config.save_to_file().ok();
+        }
+    }
+
+    /// Remove a sound from a playlist
+    /// If "All Sounds", this deletes the actual file
+    /// For other playlists, it just removes from the playlist
+    pub fn remove_from_playlist(&mut self, playlist_name: &str, path: &PathBuf) {
+        if playlist_name == "All Sounds" {
+            // Delete the actual file
+            self.delete_sound_file(path);
+        } else {
+            // Just remove from playlist
+            if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
+                playlist.remove_sound(path);
+                self.config.save_to_file().ok();
+            }
+        }
+        // Remove from current files view
+        self.app_state.files.remove(path);
+    }
+
+    /// Delete a sound file from the sounds folder
+    pub fn delete_sound_file(&mut self, path: &PathBuf) {
+        // Delete the file
+        if let Err(e) = std::fs::remove_file(path) {
+            eprintln!("Failed to delete file {}: {}", path.display(), e);
+            return;
+        }
+
+        // Remove from all playlists
+        for playlist in self.config.categories.values_mut() {
+            playlist.remove_sound(path);
+        }
+
+        // Remove from favorites
+        self.config.favorites.remove(path);
+
+        // Remove metadata
+        self.config.sound_metadata.remove(path);
+
+        self.config.save_to_file().ok();
+
+        // Remove from current files view
+        self.app_state.files.remove(path);
     }
 
     pub fn set_sound_custom_name(&mut self, path: &PathBuf, name: Option<String>) {
         let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
         metadata.custom_name = name.filter(|s| !s.is_empty());
-        if metadata.is_empty() {
-            self.config.sound_metadata.remove(path);
-        }
-        self.config.save_to_file().ok();
-    }
-
-    pub fn set_sound_description(&mut self, path: &PathBuf, description: Option<String>) {
-        let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
-        metadata.description = description.filter(|s| !s.is_empty());
         if metadata.is_empty() {
             self.config.sound_metadata.remove(path);
         }
@@ -457,6 +537,151 @@ impl SoundpadGui {
         let mut tags: Vec<_> = all_tags.into_iter().collect();
         tags.sort();
         tags
+    }
+
+    /// Get the individual volume for a sound (None = use global volume)
+    pub fn get_sound_volume(&self, path: &PathBuf) -> Option<f32> {
+        self.config.sound_metadata.get(path).and_then(|m| m.volume)
+    }
+
+    /// Set the individual volume for a sound (None = use global volume)
+    pub fn set_sound_volume(&mut self, path: &PathBuf, volume: Option<f32>) {
+        let metadata = self.config.sound_metadata.entry(path.clone()).or_default();
+        metadata.volume = volume.map(|v| v.clamp(0.0, 1.0));
+        if metadata.is_empty() {
+            self.config.sound_metadata.remove(path);
+        }
+        self.config.save_to_file().ok();
+    }
+
+    // ============= Sounds Folder Methods =============
+
+    /// Import files into the sounds folder by copying them
+    pub fn import_files(&mut self, files: Vec<PathBuf>) {
+        let Some(sounds_folder) = self.config.sounds_folder.clone() else {
+            eprintln!("Sounds folder not configured");
+            return;
+        };
+
+        // Ensure directory exists
+        if !sounds_folder.exists() {
+            if let Err(e) = std::fs::create_dir_all(&sounds_folder) {
+                eprintln!("Failed to create sounds folder: {}", e);
+                return;
+            }
+        }
+
+        let mut imported = 0;
+        let mut skipped = 0;
+
+        for file in &files {
+            // Only process supported audio files
+            let ext = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_lowercase();
+
+            if !SUPPORTED_EXTENSIONS.contains(&ext.as_str()) {
+                continue;
+            }
+
+            if let Some(filename) = file.file_name() {
+                let dest = sounds_folder.join(filename);
+
+                // Handle duplicates - generate unique name
+                let final_dest = self.get_unique_path(&dest);
+
+                match std::fs::copy(file, &final_dest) {
+                    Ok(_) => {
+                        imported += 1;
+                        println!("Imported: {}", final_dest.display());
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to copy {}: {}", file.display(), e);
+                        skipped += 1;
+                    }
+                }
+            }
+        }
+
+        println!("Import complete: {} imported, {} skipped", imported, skipped);
+
+        // Refresh file list if viewing "All Sounds" playlist
+        if self.app_state.current_playlist.as_deref() == Some("All Sounds") {
+            self.load_all_sounds();
+        }
+    }
+
+    /// Generate unique path if file already exists
+    fn get_unique_path(&self, path: &PathBuf) -> PathBuf {
+        if !path.exists() {
+            return path.clone();
+        }
+
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let parent = path.parent().unwrap_or(std::path::Path::new("."));
+
+        for i in 1..1000 {
+            let new_name = if ext.is_empty() {
+                format!("{} ({})", stem, i)
+            } else {
+                format!("{} ({}).{}", stem, i, ext)
+            };
+            let new_path = parent.join(new_name);
+            if !new_path.exists() {
+                return new_path;
+            }
+        }
+
+        // Fallback: use timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        parent.join(format!("{}_{}.{}", stem, timestamp, ext))
+    }
+
+    /// Open sounds folder in system file manager
+    pub fn open_sounds_folder(&self) {
+        if let Some(ref path) = self.config.sounds_folder {
+            let _ = open::that(path);
+        }
+    }
+
+    /// Set the sounds folder path
+    pub fn set_sounds_folder(&mut self, path: PathBuf) {
+        // Create directory if it doesn't exist
+        if !path.exists() {
+            std::fs::create_dir_all(&path).ok();
+        }
+
+        self.config.sounds_folder = Some(path.clone());
+        self.config.save_to_file().ok();
+
+        // Open the "All Sounds" playlist
+        self.open_playlist("All Sounds");
+    }
+
+    /// Show dialog to select sounds folder
+    pub fn pick_sounds_folder(&mut self) {
+        let file_dialog = FileDialog::new();
+        if let Some(path) = file_dialog.pick_folder() {
+            self.set_sounds_folder(path);
+        }
+    }
+
+    /// Import via file dialog (Add Sound button)
+    pub fn import_sounds_dialog(&mut self) {
+        let file_dialog = FileDialog::new().add_filter("Audio Files", &SUPPORTED_EXTENSIONS);
+
+        if let Some(paths) = file_dialog.pick_files() {
+            self.import_files(paths);
+        }
     }
 }
 

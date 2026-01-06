@@ -73,12 +73,20 @@ pub struct AppState {
     /// Category being edited (for rename)
     pub editing_category: Option<String>,
 
+    /// Currently selected playlist (None = no playlist selected, "All Sounds" = virtual playlist)
+    pub current_playlist: Option<String>,
+
     /// File being edited for metadata (shows popup)
     pub editing_metadata_file: Option<PathBuf>,
     /// Current tag input text
     pub tag_input: String,
     /// Search filter by tag (when set, only show files with this tag)
     pub filter_by_tag: Option<String>,
+
+    /// Whether to show the sounds folder setup wizard
+    pub show_sounds_folder_setup: bool,
+    /// Temporary path for sounds folder selection during setup
+    pub pending_sounds_folder: Option<PathBuf>,
 }
 
 #[derive(Default, Debug, Clone)]

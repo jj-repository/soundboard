@@ -1,10 +1,14 @@
-use crate::gui::SoundpadGui;
+use crate::gui::{SoundpadGui, SUPPORTED_EXTENSIONS};
 use crate::gui::draw::create_hotkey_binding;
 use egui::{Context, Key};
 use pwsp::types::gui::HotkeyRecording;
+use std::path::PathBuf;
 
 impl SoundpadGui {
     pub fn handle_input(&mut self, ctx: &Context) {
+        // Handle dropped files (drag-and-drop)
+        self.handle_dropped_files(ctx);
+
         // Handle hotkey recording first (captures all key input when recording)
         if self.app_state.recording_hotkey.is_some() {
             let mut recorded_binding = None;
@@ -140,6 +144,44 @@ impl SoundpadGui {
                 }
             }
         });
+    }
+
+    /// Handle files dropped into the window
+    fn handle_dropped_files(&mut self, ctx: &Context) {
+        let dropped_files: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+
+        if dropped_files.is_empty() {
+            return;
+        }
+
+        // Filter to only audio files
+        let audio_files: Vec<PathBuf> = dropped_files
+            .into_iter()
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        if audio_files.is_empty() {
+            return;
+        }
+
+        if self.config.sounds_folder.is_some() {
+            // Import files to sounds folder
+            self.import_files(audio_files);
+        } else {
+            // Prompt to set up sounds folder
+            self.app_state.show_sounds_folder_setup = true;
+        }
     }
 }
 
