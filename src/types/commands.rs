@@ -113,7 +113,7 @@ impl Executable for PingCommand {
 #[async_trait]
 impl Executable for PauseCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         audio_player.pause();
         Response::new(true, "Audio was paused")
     }
@@ -122,7 +122,7 @@ impl Executable for PauseCommand {
 #[async_trait]
 impl Executable for ResumeCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         audio_player.resume();
         Response::new(true, "Audio was resumed")
     }
@@ -131,7 +131,7 @@ impl Executable for ResumeCommand {
 #[async_trait]
 impl Executable for TogglePauseCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
 
         if audio_player.get_state() == PlayerState::Stopped {
             return Response::new(false, "Audio is not playing");
@@ -150,7 +150,7 @@ impl Executable for TogglePauseCommand {
 #[async_trait]
 impl Executable for StopCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         audio_player.stop();
         Response::new(true, "Audio was stopped")
     }
@@ -159,7 +159,7 @@ impl Executable for StopCommand {
 #[async_trait]
 impl Executable for IsPausedCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let is_paused = audio_player.is_paused().to_string();
         Response::new(true, is_paused)
     }
@@ -168,16 +168,19 @@ impl Executable for IsPausedCommand {
 #[async_trait]
 impl Executable for GetStateCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let state = audio_player.get_state();
-        Response::new(true, serde_json::to_string(&state).unwrap())
+        match serde_json::to_string(&state) {
+            Ok(json) => Response::new(true, json),
+            Err(_) => Response::new(false, "Failed to serialize player state"),
+        }
     }
 }
 
 #[async_trait]
 impl Executable for GetVolumeCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let volume = audio_player.volume;
         Response::new(true, volume.to_string())
     }
@@ -187,7 +190,7 @@ impl Executable for GetVolumeCommand {
 impl Executable for SetVolumeCommand {
     async fn execute(&self) -> Response {
         if let Some(volume) = self.volume {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             audio_player.set_volume(volume);
             Response::new(true, format!("Audio volume was set to {}", volume))
         } else {
@@ -199,7 +202,7 @@ impl Executable for SetVolumeCommand {
 #[async_trait]
 impl Executable for GetGainCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let gain = audio_player.get_gain();
         Response::new(true, gain.to_string())
     }
@@ -209,7 +212,7 @@ impl Executable for GetGainCommand {
 impl Executable for SetGainCommand {
     async fn execute(&self) -> Response {
         if let Some(gain) = self.gain {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             audio_player.set_gain(gain);
             Response::new(true, format!("Audio gain was set to {}", gain))
         } else {
@@ -221,7 +224,7 @@ impl Executable for SetGainCommand {
 #[async_trait]
 impl Executable for GetMicGainCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let mic_gain = audio_player.get_mic_gain();
         Response::new(true, mic_gain.to_string())
     }
@@ -231,7 +234,7 @@ impl Executable for GetMicGainCommand {
 impl Executable for SetMicGainCommand {
     async fn execute(&self) -> Response {
         if let Some(mic_gain) = self.mic_gain {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             audio_player.set_mic_gain(mic_gain);
             Response::new(true, format!("Mic gain was set to {}", mic_gain))
         } else {
@@ -243,7 +246,7 @@ impl Executable for SetMicGainCommand {
 #[async_trait]
 impl Executable for GetPositionCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let position = audio_player.get_position();
         Response::new(true, position.to_string())
     }
@@ -253,7 +256,7 @@ impl Executable for GetPositionCommand {
 impl Executable for SeekCommand {
     async fn execute(&self) -> Response {
         if let Some(position) = self.position {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             match audio_player.seek(position) {
                 Ok(_) => Response::new(true, format!("Audio position was set to {}", position)),
                 Err(err) => Response::new(false, err.to_string()),
@@ -267,7 +270,7 @@ impl Executable for SeekCommand {
 #[async_trait]
 impl Executable for GetDurationCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         match audio_player.get_duration() {
             Ok(duration) => Response::new(true, duration.to_string()),
             Err(err) => Response::new(false, err.to_string()),
@@ -279,7 +282,7 @@ impl Executable for GetDurationCommand {
 impl Executable for PlayCommand {
     async fn execute(&self) -> Response {
         if let Some(file_path) = &self.file_path {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             match audio_player.play(file_path).await {
                 Ok(_) => Response::new(true, format!("Now playing {}", file_path.display())),
                 Err(err) => Response::new(false, err.to_string()),
@@ -294,7 +297,7 @@ impl Executable for PlayCommand {
 impl Executable for PreviewCommand {
     async fn execute(&self) -> Response {
         if let Some(file_path) = &self.file_path {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             match audio_player.preview(file_path) {
                 Ok(_) => Response::new(true, format!("Previewing {}", file_path.display())),
                 Err(err) => Response::new(false, err.to_string()),
@@ -308,10 +311,13 @@ impl Executable for PreviewCommand {
 #[async_trait]
 impl Executable for GetCurrentFilePathCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         let current_file_path = audio_player.get_current_file_path();
         if let Some(current_file_path) = current_file_path {
-            Response::new(true, current_file_path.to_str().unwrap())
+            match current_file_path.to_str() {
+                Some(path_str) => Response::new(true, path_str),
+                None => Response::new(false, "File path contains invalid UTF-8"),
+            }
         } else {
             Response::new(false, "No file is playing")
         }
@@ -321,7 +327,7 @@ impl Executable for GetCurrentFilePathCommand {
 #[async_trait]
 impl Executable for GetCurrentInputCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         if let Some(input_device) = &audio_player.current_input_device {
             Response::new(
                 true,
@@ -336,19 +342,22 @@ impl Executable for GetCurrentInputCommand {
 #[async_trait]
 impl Executable for GetAllInputsCommand {
     async fn execute(&self) -> Response {
-        let (input_devices, _output_devices) = get_all_devices().await.unwrap();
-        let mut input_devices_strings = vec![];
-        for device in input_devices {
-            if device.name == "pwsp-virtual-mic" {
-                continue;
+        match get_all_devices().await {
+            Ok((input_devices, _output_devices)) => {
+                let mut input_devices_strings = vec![];
+                for device in input_devices {
+                    if device.name == "pwsp-virtual-mic" {
+                        continue;
+                    }
+
+                    let string = format!("{} - {}", device.name, device.nick);
+                    input_devices_strings.push(string);
+                }
+                let response_message = input_devices_strings.join("; ");
+                Response::new(true, response_message)
             }
-
-            let string = format!("{} - {}", device.name, device.nick);
-            input_devices_strings.push(string);
+            Err(e) => Response::new(false, format!("Failed to get input devices: {}", e)),
         }
-        let response_message = input_devices_strings.join("; ");
-
-        Response::new(true, response_message)
     }
 }
 
@@ -356,7 +365,7 @@ impl Executable for GetAllInputsCommand {
 impl Executable for SetCurrentInputCommand {
     async fn execute(&self) -> Response {
         if let Some(name) = &self.name {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             match audio_player.set_current_input_device(name).await {
                 Ok(_) => Response::new(true, "Input device was set"),
                 Err(err) => Response::new(false, err.to_string()),
@@ -370,7 +379,7 @@ impl Executable for SetCurrentInputCommand {
 #[async_trait]
 impl Executable for GetCurrentOutputCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         if let Some(output_device) = audio_player.get_current_output_device() {
             Response::new(true, output_device.clone())
         } else {
@@ -382,7 +391,7 @@ impl Executable for GetCurrentOutputCommand {
 #[async_trait]
 impl Executable for GetAllOutputsCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let output_devices = audio_player.get_all_output_devices();
         let output_devices_strings: Vec<String> = output_devices.keys().cloned().collect();
         let response_message = output_devices_strings.join("; ");
@@ -406,7 +415,7 @@ impl Executable for SetCurrentOutputCommand {
 #[async_trait]
 impl Executable for GetLoopCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         Response::new(true, audio_player.looped.to_string())
     }
 }
@@ -414,7 +423,7 @@ impl Executable for GetLoopCommand {
 #[async_trait]
 impl Executable for SetLoopCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
 
         match self.enabled {
             Some(enabled) => {
@@ -429,7 +438,7 @@ impl Executable for SetLoopCommand {
 #[async_trait]
 impl Executable for ToggleLoopCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         audio_player.looped = !audio_player.looped;
         Response::new(true, format!("Loop was set to {}", audio_player.looped))
     }
@@ -442,7 +451,7 @@ impl Executable for PlayOnLayerCommand {
     async fn execute(&self) -> Response {
         match (&self.layer_index, &self.file_path) {
             (Some(layer_index), Some(file_path)) => {
-                let mut audio_player = get_audio_player().await.lock().await;
+                let mut audio_player = get_audio_player().lock().await;
                 match audio_player.play_on_layer(*layer_index, file_path).await {
                     Ok(_) => Response::new(
                         true,
@@ -460,7 +469,7 @@ impl Executable for PlayOnLayerCommand {
 impl Executable for StopLayerCommand {
     async fn execute(&self) -> Response {
         if let Some(layer_index) = self.layer_index {
-            let mut audio_player = get_audio_player().await.lock().await;
+            let mut audio_player = get_audio_player().lock().await;
             match audio_player.stop_layer(layer_index) {
                 Ok(_) => Response::new(true, format!("Stopped layer {}", layer_index)),
                 Err(err) => Response::new(false, err.to_string()),
@@ -474,7 +483,7 @@ impl Executable for StopLayerCommand {
 #[async_trait]
 impl Executable for StopAllLayersCommand {
     async fn execute(&self) -> Response {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
         audio_player.stop_all_layers();
         Response::new(true, "All layers stopped")
     }
@@ -485,7 +494,7 @@ impl Executable for SetLayerVolumeCommand {
     async fn execute(&self) -> Response {
         match (self.layer_index, self.volume) {
             (Some(layer_index), Some(volume)) => {
-                let mut audio_player = get_audio_player().await.lock().await;
+                let mut audio_player = get_audio_player().lock().await;
                 match audio_player.set_layer_volume(layer_index, volume) {
                     Ok(_) => Response::new(
                         true,
@@ -502,7 +511,7 @@ impl Executable for SetLayerVolumeCommand {
 #[async_trait]
 impl Executable for GetLayersInfoCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().await.lock().await;
+        let audio_player = get_audio_player().lock().await;
         let layers_info = audio_player.get_all_layers_info();
         match serde_json::to_string(&layers_info) {
             Ok(json) => Response::new(true, json),

@@ -82,10 +82,15 @@ impl Tray for PwspTray {
 pub struct TrayHandle {
     pub receiver: mpsc::Receiver<TrayMessage>,
     _thread: thread::JoinHandle<()>,
+    // When dropped, signals the tray thread to exit cleanly
+    _stop_sender: mpsc::Sender<()>,
 }
 
 pub fn start_tray() -> Option<TrayHandle> {
     let (sender, receiver) = mpsc::channel();
+
+    // Create a channel to signal when the tray should stop
+    let (stop_sender, stop_receiver) = mpsc::channel::<()>();
 
     // Spawn the tray in a separate thread with its own tokio runtime
     // to avoid conflicts with eframe's async context
@@ -93,12 +98,14 @@ pub fn start_tray() -> Option<TrayHandle> {
         let tray = PwspTray { sender };
         match tray.spawn() {
             Ok(handle) => {
-                // Keep the handle alive - this blocks until the tray is closed
-                std::mem::forget(handle);
-                // Sleep forever to keep the thread alive
-                loop {
-                    thread::sleep(std::time::Duration::from_secs(3600));
-                }
+                // Store the handle properly instead of using mem::forget
+                // Wait for stop signal or indefinitely if app keeps running
+                // The handle must stay alive for the tray to work
+                let _tray_handle = handle;
+                // Block on stop signal - this keeps the thread alive while holding the handle
+                let _ = stop_receiver.recv();
+                // When we receive the stop signal (or channel closes), thread exits
+                // and _tray_handle is dropped, cleaning up the tray
             }
             Err(e) => {
                 eprintln!("Failed to create system tray: {}", e);
@@ -106,8 +113,11 @@ pub fn start_tray() -> Option<TrayHandle> {
         }
     });
 
+    // Store stop_sender so it's dropped when TrayHandle is dropped,
+    // which signals the tray thread to exit
     Some(TrayHandle {
         receiver,
         _thread: thread_handle,
+        _stop_sender: stop_sender,
     })
 }

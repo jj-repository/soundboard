@@ -4,6 +4,7 @@ use std::{collections::{HashMap, HashSet}, error::Error, fs, path::PathBuf};
 
 /// Represents a configurable hotkey binding
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 pub struct HotkeyBinding {
     /// Key code (e.g., "KeyP", "KeyS", "Space")
     pub key: String,
@@ -48,17 +49,6 @@ impl HotkeyBinding {
     }
 }
 
-impl Default for HotkeyBinding {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            ctrl: false,
-            shift: false,
-            alt: false,
-            super_key: false,
-        }
-    }
-}
 
 /// Hotkey configuration for all actions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +197,16 @@ pub struct GuiConfig {
     /// Path to the centralized sounds folder (None if not configured)
     #[serde(default)]
     pub sounds_folder: Option<PathBuf>,
+    /// Width of the sidebar (playlists panel) in pixels
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f32,
+    /// Order of playlists (by name)
+    #[serde(default)]
+    pub playlist_order: Vec<String>,
+}
+
+fn default_sidebar_width() -> f32 {
+    200.0
 }
 
 impl Default for GuiConfig {
@@ -227,6 +227,8 @@ impl Default for GuiConfig {
             categories: HashMap::default(),
             sound_metadata: HashMap::default(),
             sounds_folder: None,
+            sidebar_width: default_sidebar_width(),
+            playlist_order: Vec::new(),
         }
     }
 }

@@ -11,9 +11,23 @@ use std::{
     collections::HashMap,
     error::Error,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::time::{Duration, sleep};
+
+/// Extension trait for Mutex that handles poisoning gracefully
+trait MutexExt<T> {
+    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for Mutex<T> {
+    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| {
+            eprintln!("Warning: Mutex was poisoned, recovering...");
+            poisoned.into_inner()
+        })
+    }
+}
 
 pub fn get_gui_config() -> GuiConfig {
     GuiConfig::load_from_file().unwrap_or_else(|_| {
@@ -24,11 +38,45 @@ pub fn get_gui_config() -> GuiConfig {
 }
 
 pub fn make_request_sync(request: Request) -> Result<Response, Box<dyn Error>> {
-    tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current()
-            .block_on(make_request(request))
-            .map_err(|e| e as Box<dyn Error>)
-    })
+    // Try to use the existing runtime if available
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // We have a runtime - use block_in_place for multi-threaded runtimes
+        match handle.runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| {
+                    handle
+                        .block_on(make_request(request))
+                        .map_err(|e| -> Box<dyn Error> { e.to_string().into() })
+                })
+            }
+            _ => {
+                // For current-thread runtime, use a oneshot channel to get the result
+                let (tx, rx) = std::sync::mpsc::channel();
+                let request_clone = request.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .ok();
+                    if let Some(rt) = rt {
+                        let result = rt.block_on(make_request(request_clone));
+                        let _ = tx.send(result.map_err(|e| e.to_string()));
+                    }
+                });
+                rx.recv()
+                    .map_err(|_| "Thread communication failed")?
+                    .map_err(|e| -> Box<dyn Error> { e.into() })
+            }
+        }
+    } else {
+        // No runtime available - create a temporary one
+        // This is less efficient but prevents panics
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(make_request(request))
+            .map_err(|e| -> Box<dyn Error> { e.to_string().into() })
+    }
 }
 
 pub fn format_time_pair(position: f32, duration: f32) -> String {
@@ -45,6 +93,7 @@ pub fn format_time_pair(position: f32, duration: f32) -> String {
 pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerState>>) {
     tokio::spawn(async move {
         let sleep_duration = Duration::from_secs_f32(1.0 / 60.0);
+        let mut last_error_logged: Option<String> = None;
 
         loop {
             wait_for_daemon().await.ok();
@@ -96,20 +145,55 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 make_request(layers_info_req),
             );
 
-            let state_res = state_res.unwrap_or_default();
-            let file_path_res = file_path_res.unwrap_or_default();
-            let is_paused_res = is_paused_res.unwrap_or_default();
-            let volume_res = volume_res.unwrap_or_default();
-            let gain_res = gain_res.unwrap_or_default();
-            let mic_gain_res = mic_gain_res.unwrap_or_default();
-            let position_res = position_res.unwrap_or_default();
-            let duration_res = duration_res.unwrap_or_default();
-            let current_input_res = current_input_res.unwrap_or_default();
-            let all_inputs_res = all_inputs_res.unwrap_or_default();
-            let current_output_res = current_output_res.unwrap_or_default();
-            let all_outputs_res = all_outputs_res.unwrap_or_default();
-            let looped_res = looped_res.unwrap_or_default();
-            let layers_info_res = layers_info_res.unwrap_or_default();
+            // Track connection status and errors
+            let mut error_count = 0;
+            let mut first_error: Option<String> = None;
+
+            // Helper macro to handle results with error tracking
+            macro_rules! handle_result {
+                ($res:expr) => {
+                    match $res {
+                        Ok(response) => response,
+                        Err(e) => {
+                            error_count += 1;
+                            if first_error.is_none() {
+                                first_error = Some(e.to_string());
+                            }
+                            Response::default()
+                        }
+                    }
+                };
+            }
+
+            let state_res = handle_result!(state_res);
+            let file_path_res = handle_result!(file_path_res);
+            let is_paused_res = handle_result!(is_paused_res);
+            let volume_res = handle_result!(volume_res);
+            let gain_res = handle_result!(gain_res);
+            let mic_gain_res = handle_result!(mic_gain_res);
+            let position_res = handle_result!(position_res);
+            let duration_res = handle_result!(duration_res);
+            let current_input_res = handle_result!(current_input_res);
+            let all_inputs_res = handle_result!(all_inputs_res);
+            let current_output_res = handle_result!(current_output_res);
+            let all_outputs_res = handle_result!(all_outputs_res);
+            let looped_res = handle_result!(looped_res);
+            let layers_info_res = handle_result!(layers_info_res);
+
+            // Determine connection status
+            let daemon_connected = error_count == 0;
+
+            // Log errors only when they change (avoid spam)
+            if let Some(ref err) = first_error {
+                if last_error_logged.as_ref() != Some(err) {
+                    eprintln!("Daemon communication error ({} requests failed): {}", error_count, err);
+                    last_error_logged = Some(err.clone());
+                }
+            } else if last_error_logged.is_some() {
+                // Connection restored
+                println!("Daemon connection restored");
+                last_error_logged = None;
+            }
 
             let state = match state_res.status {
                 true => serde_json::from_str::<PlayerState>(&state_res.message)
@@ -202,7 +286,7 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             };
 
             {
-                let mut guard = audio_player_state_shared.lock().unwrap();
+                let mut guard = audio_player_state_shared.lock_or_recover();
 
                 guard.state = guard.new_state.take().unwrap_or(state);
                 guard.current_file_path = file_path;
@@ -218,6 +302,10 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 guard.all_outputs = all_outputs;
                 guard.looped = looped;
                 guard.layers = layers;
+
+                // Update connection status
+                guard.daemon_connected = daemon_connected;
+                guard.last_error = first_error.clone();
             }
 
             sleep(sleep_duration).await;

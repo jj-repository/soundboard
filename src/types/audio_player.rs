@@ -79,6 +79,16 @@ impl AudioLayer {
 /// Number of audio layers available for mixing
 pub const NUM_AUDIO_LAYERS: usize = 4;
 
+/// Maximum gain multiplier for main audio output (5x = +14dB)
+pub const MAX_GAIN: f32 = 5.0;
+/// Minimum gain multiplier for main audio output
+pub const MIN_GAIN: f32 = 0.0;
+
+/// Maximum mic gain multiplier (3x = +9.5dB)
+pub const MAX_MIC_GAIN: f32 = 3.0;
+/// Minimum mic gain multiplier (0.5x = -6dB, prevents complete silence)
+pub const MIN_MIC_GAIN: f32 = 0.5;
+
 pub struct AudioPlayer {
     _stream_handle: OutputStream,
     sink: Sink, // Main sink for primary playback
@@ -136,13 +146,13 @@ impl AudioPlayer {
             };
 
         let mixer = stream_handle.mixer();
-        let sink = Sink::connect_new(&mixer);
+        let sink = Sink::connect_new(mixer);
         sink.set_volume(default_volume * default_gain);
 
         // Initialize audio layers for mixing
         let mut layers = Vec::with_capacity(NUM_AUDIO_LAYERS);
         for _ in 0..NUM_AUDIO_LAYERS {
-            layers.push(AudioLayer::new(&mixer));
+            layers.push(AudioLayer::new(mixer));
         }
 
         let has_input_device = default_input_device.is_some();
@@ -178,11 +188,10 @@ impl AudioPlayer {
         let devices = host.output_devices()?;
 
         for device in devices {
-            if let Ok(name) = device.name() {
-                if name == device_name {
+            if let Ok(name) = device.name()
+                && name == device_name {
                     return Ok(OutputStreamBuilder::from_device(device)?.open_stream()?);
                 }
-            }
         }
 
         Err(format!("Output device '{}' not found", device_name).into())
@@ -197,11 +206,10 @@ impl AudioPlayer {
     }
 
     fn abort_link_thread(&mut self) {
-        if let Some(sender) = &self.input_link_sender {
-            if sender.send(Terminate {}).is_err() {
+        if let Some(sender) = &self.input_link_sender
+            && sender.send(Terminate {}).is_err() {
                 eprintln!("Failed to send terminate signal to link thread");
             }
-        }
     }
 
     async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
@@ -336,7 +344,7 @@ impl AudioPlayer {
     }
 
     pub fn set_gain(&mut self, gain: f32) {
-        self.gain = gain.clamp(0.0, 5.0); // Allow up to 5x boost
+        self.gain = gain.clamp(MIN_GAIN, MAX_GAIN);
         self.update_sink_volume();
     }
 
@@ -347,14 +355,32 @@ impl AudioPlayer {
     fn apply_mic_gain(&self) {
         if let Some(device) = &self.current_input_device {
             // Use wpctl to set the source volume
-            let _ = Command::new("wpctl")
-                .args(["set-volume", &device.id.to_string(), &self.mic_gain.to_string()])
-                .output();
+            // Safety: device.id is u32 and mic_gain is f32 (clamped to MIN_MIC_GAIN-MAX_MIC_GAIN),
+            // so no shell injection is possible. Command::args() also bypasses shell.
+            let id_str = device.id.to_string();
+            let gain_str = format!("{:.2}", self.mic_gain);
+
+            match Command::new("wpctl")
+                .args(["set-volume", &id_str, &gain_str])
+                .output()
+            {
+                Ok(output) => {
+                    if !output.status.success() {
+                        eprintln!(
+                            "wpctl set-volume failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to execute wpctl: {}", e);
+                }
+            }
         }
     }
 
     pub fn set_mic_gain(&mut self, mic_gain: f32) {
-        self.mic_gain = mic_gain.clamp(0.5, 3.0);
+        self.mic_gain = mic_gain.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
         self.apply_mic_gain();
     }
 
@@ -398,6 +424,11 @@ impl AudioPlayer {
         }
 
         let file = fs::File::open(file_path)?;
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown");
+
         match Decoder::try_from(file) {
             Ok(source) => {
                 self.current_file_path = Some(file_path.to_path_buf());
@@ -415,7 +446,12 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(err.into()),
+            Err(err) => Err(format!(
+                "Failed to decode '{}' (format: {}): {}",
+                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                extension,
+                err
+            ).into()),
         }
     }
 
@@ -426,6 +462,11 @@ impl AudioPlayer {
         }
 
         let file = fs::File::open(file_path)?;
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown");
+
         match Decoder::try_from(file) {
             Ok(source) => {
                 self.current_file_path = Some(file_path.to_path_buf());
@@ -446,7 +487,12 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(err.into()),
+            Err(err) => Err(format!(
+                "Failed to decode '{}' (format: {}): {}",
+                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                extension,
+                err
+            ).into()),
         }
     }
 
@@ -489,6 +535,11 @@ impl AudioPlayer {
         }
 
         let file = fs::File::open(file_path)?;
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown");
+
         match Decoder::try_from(file) {
             Ok(source) => {
                 let layer = &mut self.layers[layer_index];
@@ -509,7 +560,13 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(err.into()),
+            Err(err) => Err(format!(
+                "Failed to decode '{}' (format: {}) on layer {}: {}",
+                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                extension,
+                layer_index,
+                err
+            ).into()),
         }
     }
 

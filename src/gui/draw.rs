@@ -12,6 +12,14 @@ use pwsp::utils::gui::format_time_pair;
 use pwsp::utils::updater::get_current_version;
 use std::error::Error;
 
+// UI Constants
+const CONTROL_SIZE: f32 = 30.0;
+const BUTTON_CORNER_RADIUS: f32 = 15.0;
+const TEXT_SIZE_MEDIUM: f32 = 12.0;
+const TEXT_SIZE_ICON: f32 = 18.0;
+const SPACING_SMALL: f32 = 4.0;
+const MIN_SLIDER_WIDTH: f32 = 50.0;
+
 impl SoundpadGui {
     pub fn draw_waiting_for_daemon(&mut self, ui: &mut Ui) {
         ui.centered_and_justified(|ui| {
@@ -80,12 +88,10 @@ impl SoundpadGui {
             if ui
                 .add_enabled(can_continue, Button::new(format!("{} Continue", icons::ICON_CHECK)))
                 .clicked()
-            {
-                if let Some(path) = self.app_state.pending_sounds_folder.take() {
+                && let Some(path) = self.app_state.pending_sounds_folder.take() {
                     self.set_sounds_folder(path);
                     self.app_state.show_sounds_folder_setup = false;
                 }
-            }
 
             ui.add_space(15.0);
 
@@ -223,7 +229,7 @@ impl SoundpadGui {
                         .hotkeys
                         .play_pause
                         .as_ref()
-                        .map(|b| format_hotkey_display(b))
+                        .map(format_hotkey_display)
                         .unwrap_or_else(|| "Not set".to_string());
 
                     ui.label(&display_text);
@@ -259,7 +265,7 @@ impl SoundpadGui {
                         .hotkeys
                         .stop
                         .as_ref()
-                        .map(|b| format_hotkey_display(b))
+                        .map(format_hotkey_display)
                         .unwrap_or_else(|| "Not set".to_string());
 
                     ui.label(&display_text);
@@ -351,38 +357,34 @@ impl SoundpadGui {
                     });
                 }
                 UpdateStatus::UpdateAvailable { latest_version, release_url, download_url } => {
-                    let latest_version = latest_version.clone();
-                    let release_url = release_url.clone();
-                    let download_url = download_url.clone();
-
                     ui.label(
                         RichText::new(format!("New version available: v{}", latest_version))
                             .color(Color32::YELLOW),
                     );
 
                     let mut should_download = false;
-                    let mut download_url_to_use = None;
                     let mut should_open_release = false;
+                    // Clone values we need for actions to release the borrow
+                    let download_url_clone = download_url.clone();
+                    let release_url_clone = release_url.clone();
 
                     ui.horizontal(|ui| {
-                        if let Some(url) = &download_url {
-                            if ui.button("Download update").clicked() {
+                        if download_url_clone.is_some()
+                            && ui.button("Download update").clicked() {
                                 should_download = true;
-                                download_url_to_use = Some(url.clone());
                             }
-                        }
                         if ui.button("View release").clicked() {
                             should_open_release = true;
                         }
                     });
 
-                    if should_download {
-                        if let Some(url) = download_url_to_use {
+                    // Handle actions after UI
+                    if should_download
+                        && let Some(url) = download_url_clone {
                             self.download_update(url);
                         }
-                    }
                     if should_open_release {
-                        let _ = open::that(&release_url);
+                        let _ = open::that(&release_url_clone);
                     }
                 }
                 UpdateStatus::Downloading { progress } => {
@@ -395,11 +397,10 @@ impl SoundpadGui {
                     let file_path = file_path.clone();
                     ui.label(RichText::new("Update downloaded!").color(Color32::GREEN));
                     ui.label(format!("Saved to: {}", file_path.display()));
-                    if ui.button("Open download location").clicked() {
-                        if let Some(parent) = file_path.parent() {
+                    if ui.button("Open download location").clicked()
+                        && let Some(parent) = file_path.parent() {
                             let _ = open::that(parent);
                         }
-                    }
                 }
                 UpdateStatus::Error(msg) => {
                     let msg = msg.clone();
@@ -445,6 +446,12 @@ impl SoundpadGui {
     }
 
     fn draw_layers_panel(&mut self, ui: &mut Ui) {
+        /// Action to perform on audio layers
+        enum LayerAction {
+            StopOne(usize),
+            StopAll,
+        }
+
         // Check if any layers are active
         let has_active_layers = self.audio_player_state.layers.iter().any(|l| l.is_playing || !l.is_empty);
 
@@ -452,11 +459,13 @@ impl SoundpadGui {
             return;
         }
 
+        // Collect layer actions to avoid borrow issues with closures
+        let mut layer_action: Option<LayerAction> = None;
+
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{} Layers:", icons::ICON_LAYERS)).size(12.0).weak());
 
-            let layers = self.audio_player_state.layers.clone();
-            for (i, layer) in layers.iter().enumerate() {
+            for (i, layer) in self.audio_player_state.layers.iter().enumerate() {
                 if layer.is_empty && !layer.is_playing {
                     continue;
                 }
@@ -485,7 +494,7 @@ impl SoundpadGui {
                 let layer_response = ui.add(layer_btn);
 
                 if layer_response.clicked() {
-                    self.stop_layer(i);
+                    layer_action = Some(LayerAction::StopOne(i));
                 }
                 if layer_response.hovered() {
                     layer_response.on_hover_text(format!("Click to stop layer {}", i + 1));
@@ -498,29 +507,38 @@ impl SoundpadGui {
             ).frame(false);
             let stop_all_response = ui.add(stop_all_btn);
             if stop_all_response.clicked() {
-                self.stop_all_layers();
+                layer_action = Some(LayerAction::StopAll);
             }
         });
+
+        // Execute actions after UI rendering (avoids borrow issues)
+        match layer_action {
+            Some(LayerAction::StopAll) => self.stop_all_layers(),
+            Some(LayerAction::StopOne(layer)) => self.stop_layer(layer),
+            None => {}
+        }
     }
 
     fn draw_controls(&mut self, ui: &mut Ui) {
         ui.horizontal_top(|ui| {
+            let control_size = [CONTROL_SIZE, CONTROL_SIZE];
+
             // ---------- Play Button ----------
             let play_button = Button::new(match self.audio_player_state.state {
                 PlayerState::Playing => icons::ICON_PAUSE,
                 PlayerState::Paused | PlayerState::Stopped => icons::ICON_PLAY_ARROW,
             })
-            .corner_radius(15.0);
+            .corner_radius(BUTTON_CORNER_RADIUS);
 
-            let play_button_response = ui.add_sized([30.0, 30.0], play_button);
+            let play_button_response = ui.add_sized(control_size, play_button);
             if play_button_response.clicked() {
                 self.play_toggle();
             }
             // --------------------------------
 
             // ---------- Stop Button ----------
-            let stop_button = Button::new(icons::ICON_STOP).corner_radius(15.0);
-            let stop_button_response = ui.add_sized([30.0, 30.0], stop_button);
+            let stop_button = Button::new(icons::ICON_STOP).corner_radius(BUTTON_CORNER_RADIUS);
+            let stop_button_response = ui.add_sized(control_size, stop_button);
             if stop_button_response.clicked() {
                 self.stop();
             }
@@ -532,11 +550,11 @@ impl SoundpadGui {
                     true => icons::ICON_REPEAT_ONE,
                     false => icons::ICON_REPEAT,
                 })
-                .size(18.0),
+                .size(TEXT_SIZE_ICON),
             )
             .frame(false);
 
-            let loop_button_response = ui.add_sized([15.0, 30.0], loop_button);
+            let loop_button_response = ui.add_sized([BUTTON_CORNER_RADIUS, CONTROL_SIZE], loop_button);
             if loop_button_response.clicked() {
                 self.toggle_loop();
             }
@@ -553,12 +571,12 @@ impl SoundpadGui {
             let default_slider_width = ui.spacing().slider_width;
             // Account for: stop button, time label, volume icon, volume slider, gain icon, gain slider, gain label
             let position_slider_width = ui.available_width()
-                - (30.0 * 7.0)  // 7 controls at 30px each (added stop button)
+                - (CONTROL_SIZE * 7.0)  // 7 controls at CONTROL_SIZE each
                 - default_slider_width  // volume slider
                 - default_slider_width  // gain slider
                 - (ui.spacing().item_spacing.x * 11.0);
-            ui.spacing_mut().slider_width = position_slider_width.max(50.0);
-            let position_slider_response = ui.add_sized([30.0, 30.0], position_slider);
+            ui.spacing_mut().slider_width = position_slider_width.max(MIN_SLIDER_WIDTH);
+            let position_slider_response = ui.add_sized(control_size, position_slider);
             if position_slider_response.drag_stopped() {
                 self.app_state.position_dragged = true;
             }
@@ -572,7 +590,7 @@ impl SoundpadGui {
                 ))
                 .monospace(),
             );
-            ui.add_sized([30.0, 30.0], time_label);
+            ui.add_sized(control_size, time_label);
             // --------------------------------
 
             // ---------- Volume Icon ----------
@@ -585,8 +603,8 @@ impl SoundpadGui {
             } else {
                 icons::ICON_VOLUME_DOWN
             };
-            let volume_icon = Label::new(RichText::new(volume_icon).size(18.0));
-            ui.add_sized([30.0, 30.0], volume_icon);
+            let volume_icon = Label::new(RichText::new(volume_icon).size(TEXT_SIZE_ICON));
+            ui.add_sized(control_size, volume_icon);
             // --------------------------------
 
             // ---------- Volume Slider ----------
@@ -597,17 +615,17 @@ impl SoundpadGui {
             ui.spacing_mut().slider_width = default_slider_width;
             ui.spacing_mut().item_spacing.x = 0.0;
 
-            let volume_slider_response = ui.add_sized([30.0, 30.0], volume_slider);
+            let volume_slider_response = ui.add_sized(control_size, volume_slider);
             if volume_slider_response.drag_stopped() {
                 self.app_state.volume_dragged = true;
             }
             // --------------------------------
 
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = SPACING_SMALL;
 
             // ---------- Gain Icon ----------
-            let gain_icon = Label::new(RichText::new(icons::ICON_GRAPHIC_EQ).size(18.0));
-            ui.add_sized([30.0, 30.0], gain_icon);
+            let gain_icon = Label::new(RichText::new(icons::ICON_GRAPHIC_EQ).size(TEXT_SIZE_ICON));
+            ui.add_sized(control_size, gain_icon);
             // --------------------------------
 
             // ---------- Gain Slider ----------
@@ -617,7 +635,7 @@ impl SoundpadGui {
 
             ui.spacing_mut().item_spacing.x = 0.0;
 
-            let gain_slider_response = ui.add_sized([30.0, 30.0], gain_slider);
+            let gain_slider_response = ui.add_sized(control_size, gain_slider);
             if gain_slider_response.drag_stopped() {
                 self.app_state.gain_dragged = true;
             }
@@ -626,9 +644,9 @@ impl SoundpadGui {
             let gain_label = Label::new(
                 RichText::new(format!("{:.1}x", self.audio_player_state.gain))
                     .monospace()
-                    .size(12.0),
+                    .size(TEXT_SIZE_MEDIUM),
             );
-            ui.add_sized([30.0, 30.0], gain_label);
+            ui.add_sized(control_size, gain_label);
             // --------------------------------
         });
     }
@@ -662,13 +680,46 @@ impl SoundpadGui {
             return;
         }
 
-        let dirs_size = Vec2::new(ui.available_width() / 4.0, ui.available_height() - 40.0);
+        let available_height = ui.available_height() - 40.0;
+        let available_width = ui.available_width();
+
+        // Clamp sidebar width to reasonable bounds
+        let min_sidebar = 120.0;
+        let max_sidebar = available_width - 200.0;
+        let sidebar_width = self.config.sidebar_width.clamp(min_sidebar, max_sidebar);
 
         ui.horizontal(|ui| {
+            let dirs_size = Vec2::new(sidebar_width, available_height);
             self.draw_dirs(ui, dirs_size);
-            ui.separator();
 
-            let files_size = Vec2::new(ui.available_width(), ui.available_height() - 40.0);
+            // Resizable divider
+            let divider_response = ui.separator();
+            let divider_rect = divider_response.rect;
+
+            // Make the divider draggable
+            let divider_id = ui.id().with("sidebar_divider");
+            let sense = egui::Sense::drag();
+            let divider_interact = ui.interact(
+                divider_rect.expand2(Vec2::new(4.0, 0.0)),
+                divider_id,
+                sense,
+            );
+
+            if divider_interact.dragged() {
+                let delta = divider_interact.drag_delta().x;
+                self.config.sidebar_width = (self.config.sidebar_width + delta).clamp(min_sidebar, max_sidebar);
+            }
+
+            if divider_interact.drag_stopped() {
+                self.config.save_to_file().ok();
+            }
+
+            // Change cursor when hovering over divider
+            if divider_interact.hovered() || divider_interact.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+
+            let files_size = Vec2::new(ui.available_width(), available_height);
             self.draw_files(ui, files_size);
         });
     }
@@ -711,11 +762,11 @@ impl SoundpadGui {
 
                 ui.add_space(4.0);
 
-                // User-created playlists
-                let mut playlists: Vec<_> = self.config.categories.keys().cloned().collect();
-                playlists.sort();
+                // User-created playlists (ordered)
+                let playlists = self.get_ordered_playlists();
+                let mut drop_target_index: Option<usize> = None;
 
-                for playlist_name in &playlists {
+                for (playlist_index, playlist_name) in playlists.iter().enumerate() {
                     let is_editing = self.app_state.editing_category.as_ref() == Some(playlist_name);
 
                     if is_editing {
@@ -737,20 +788,43 @@ impl SoundpadGui {
                             }
                         });
                     } else {
-                        ui.horizontal(|ui| {
-                            let is_selected = self.app_state.current_playlist.as_deref() == Some(playlist_name);
+                        let is_selected = self.app_state.current_playlist.as_deref() == Some(playlist_name);
+                        let is_being_dragged = self.app_state.dragging_playlist.as_ref() == Some(playlist_name);
 
+                        // Create a frame for the playlist row that can be dragged
+                        let row_id = ui.id().with(("playlist_row", playlist_name));
+                        let row_response = ui.horizontal(|ui| {
                             let mut playlist_button_text = RichText::new(format!("{} {}", icons::ICON_QUEUE_MUSIC, playlist_name));
                             if is_selected {
                                 playlist_button_text = playlist_button_text.color(Color32::LIGHT_BLUE);
                             }
+                            if is_being_dragged {
+                                playlist_button_text = playlist_button_text.color(Color32::YELLOW);
+                            }
 
-                            let playlist_button =
-                                Button::new(playlist_button_text.atom_max_width(area_size.x - 54.0)).frame(false);
+                            // Make the playlist label draggable
+                            let playlist_label = Label::new(playlist_button_text)
+                                .sense(egui::Sense::click_and_drag())
+                                .truncate();
 
-                            let playlist_button_response = ui.add(playlist_button);
-                            if playlist_button_response.clicked() {
+                            let playlist_response = ui.add(playlist_label);
+
+                            // Handle click to open playlist
+                            if playlist_response.clicked() && !is_being_dragged {
                                 self.open_playlist(playlist_name);
+                            }
+
+                            // Handle drag
+                            if playlist_response.drag_started() {
+                                self.app_state.dragging_playlist = Some(playlist_name.clone());
+                            }
+
+                            // Show drag cursor
+                            if playlist_response.hovered() && !playlist_response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                            }
+                            if playlist_response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                             }
 
                             // Edit button
@@ -770,8 +844,36 @@ impl SoundpadGui {
                                 self.delete_playlist(playlist_name);
                             }
                         });
+
+                        // Check if this row is a drop target
+                        let row_rect = row_response.response.rect;
+                        if let Some(ref dragging_name) = self.app_state.dragging_playlist
+                            && dragging_name != playlist_name {
+                                // Check if mouse is over this row
+                                let interact = ui.interact(row_rect, row_id, egui::Sense::hover());
+                                if interact.hovered() {
+                                    // Draw drop indicator
+                                    let line_y = row_rect.top();
+                                    ui.painter().hline(
+                                        row_rect.x_range(),
+                                        line_y,
+                                        egui::Stroke::new(2.0, Color32::LIGHT_BLUE),
+                                    );
+                                    drop_target_index = Some(playlist_index);
+                                }
+                            }
                     }
                 }
+
+                // Handle drop
+                if ui.input(|i| i.pointer.any_released())
+                    && let Some(dragging_name) = self.app_state.dragging_playlist.take()
+                        && let Some(target_index) = drop_target_index { // Find current index
+                            if let Some(current_index) = playlists.iter().position(|n| n == &dragging_name)
+                                && current_index != target_index {
+                                    self.move_playlist(current_index, target_index);
+                                }
+                        }
 
                 // Add playlist button or input
                 if self.app_state.show_new_category_dialog {
@@ -808,27 +910,20 @@ impl SoundpadGui {
                 }
 
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    // Play file button (plays directly without importing)
-                    let play_file_button = Button::new(format!("{} Play file", icons::ICON_PLAY_ARROW));
-                    let play_file_button_response = ui.add(play_file_button);
-                    if play_file_button_response.clicked() {
-                        self.open_file();
-                    }
-
-                    // Only show import buttons if sounds folder is configured
+                    // Only show buttons if sounds folder is configured
                     if self.config.sounds_folder.is_some() {
-                        ui.add_space(4.0);
-
-                        // Import sound button
-                        let import_button = Button::new(format!("{} Add Sound", icons::ICON_ADD));
-                        if ui.add(import_button).on_hover_text("Import sound file to sounds folder").clicked() {
-                            self.import_sounds_dialog();
-                        }
-
-                        // Open sounds folder button
+                        // Open sounds folder button (bottom)
                         let open_folder_button = Button::new(format!("{} Open Sounds Folder", icons::ICON_FOLDER_OPEN));
                         if ui.add(open_folder_button).clicked() {
                             self.open_sounds_folder();
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Import sound button (top)
+                        let import_button = Button::new(format!("{} Add Sound", icons::ICON_ADD));
+                        if ui.add(import_button).on_hover_text("Import sound file to sounds folder").clicked() {
+                            self.import_sounds_dialog();
                         }
                     }
                 });
@@ -836,58 +931,65 @@ impl SoundpadGui {
         });
     }
 
+    /// Draw search bar and tag filter dropdown
+    fn draw_search_and_filter(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let search_width = ui.available_width() - 120.0;
+            let search_field = ui.add_sized(
+                [search_width.max(100.0), 22.0],
+                TextEdit::singleline(&mut self.app_state.search_query).hint_text("Search..."),
+            );
+            self.app_state.search_field_id = Some(search_field.id);
+
+            // Tag filter dropdown
+            let all_tags = self.get_all_tags();
+            if !all_tags.is_empty() {
+                let filter_text = self.app_state.filter_by_tag.as_ref()
+                    .map(|t| format!("#{}", t))
+                    .unwrap_or_else(|| "Filter by tag".to_string());
+
+                ComboBox::from_id_salt("tag_filter")
+                    .selected_text(&filter_text)
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(self.app_state.filter_by_tag.is_none(), "All sounds").clicked() {
+                            self.app_state.filter_by_tag = None;
+                        }
+                        ui.separator();
+                        for tag in &all_tags {
+                            let is_selected = self.app_state.filter_by_tag.as_ref() == Some(tag);
+                            if ui.selectable_label(is_selected, format!("#{}", tag)).clicked() {
+                                self.app_state.filter_by_tag = Some(tag.clone());
+                            }
+                        }
+                    });
+            }
+        });
+    }
+
+    /// Draw playlist header showing current playlist name
+    fn draw_playlist_header(&mut self, ui: &mut Ui) {
+        if let Some(ref playlist_name) = self.app_state.current_playlist {
+            let is_all_sounds = playlist_name == "All Sounds";
+            let icon = if is_all_sounds { icons::ICON_LIBRARY_MUSIC } else { icons::ICON_QUEUE_MUSIC };
+            let color = if is_all_sounds { Color32::LIGHT_GREEN } else { Color32::LIGHT_BLUE };
+
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} {}", icon, playlist_name))
+                        .color(color)
+                        .monospace(),
+                );
+            });
+            ui.add_space(4.0);
+        }
+    }
+
     fn draw_files(&mut self, ui: &mut Ui, area_size: Vec2) {
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                let search_width = ui.available_width() - 120.0;
-                let search_field = ui.add_sized(
-                    [search_width.max(100.0), 22.0],
-                    TextEdit::singleline(&mut self.app_state.search_query).hint_text("Search..."),
-                );
-                self.app_state.search_field_id = Some(search_field.id);
-
-                // Tag filter dropdown
-                let all_tags = self.get_all_tags();
-                if !all_tags.is_empty() {
-                    let filter_text = self.app_state.filter_by_tag.clone()
-                        .map(|t| format!("#{}", t))
-                        .unwrap_or_else(|| "Filter by tag".to_string());
-
-                    ComboBox::from_id_salt("tag_filter")
-                        .selected_text(&filter_text)
-                        .width(100.0)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(self.app_state.filter_by_tag.is_none(), "All sounds").clicked() {
-                                self.app_state.filter_by_tag = None;
-                            }
-                            ui.separator();
-                            for tag in &all_tags {
-                                let is_selected = self.app_state.filter_by_tag.as_ref() == Some(tag);
-                                if ui.selectable_label(is_selected, format!("#{}", tag)).clicked() {
-                                    self.app_state.filter_by_tag = Some(tag.clone());
-                                }
-                            }
-                        });
-                }
-            });
-
+            self.draw_search_and_filter(ui);
             ui.separator();
-
-            // Show playlist header if viewing a playlist
-            if let Some(ref playlist_name) = self.app_state.current_playlist.clone() {
-                let is_all_sounds = playlist_name == "All Sounds";
-                let icon = if is_all_sounds { icons::ICON_LIBRARY_MUSIC } else { icons::ICON_QUEUE_MUSIC };
-                let color = if is_all_sounds { Color32::LIGHT_GREEN } else { Color32::LIGHT_BLUE };
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} {}", icon, playlist_name))
-                            .color(color)
-                            .monospace(),
-                    );
-                });
-                ui.add_space(4.0);
-            }
+            self.draw_playlist_header(ui);
 
             ScrollArea::vertical().id_salt(1).show(ui, |ui| {
                 ui.set_min_width(area_size.x);
@@ -896,9 +998,22 @@ impl SoundpadGui {
                 ui.vertical(|ui| {
                     // Check if viewing a playlist
                     if let Some(ref playlist_name) = self.app_state.current_playlist.clone() {
-                        // Draw playlist contents
-                        let mut files: Vec<_> = self.app_state.files.iter().cloned().collect();
-                        files.sort();
+                        let is_user_playlist = playlist_name != "All Sounds" && playlist_name != "Favourites";
+
+                        // For user playlists, use ordered sounds; for virtual playlists, use cached sorted files
+                        let files: Vec<_> = if is_user_playlist {
+                            self.config.categories.get(playlist_name)
+                                .map(|p| p.sounds.clone())
+                                .unwrap_or_default()
+                        } else {
+                            // Use cached sorted files to avoid sorting on every frame
+                            if self.app_state.sorted_files_cache.is_none() {
+                                let mut f: Vec<_> = self.app_state.files.iter().cloned().collect();
+                                f.sort();
+                                self.app_state.sorted_files_cache = Some(f);
+                            }
+                            self.app_state.sorted_files_cache.clone().unwrap_or_default()
+                        };
 
                         let search_query = self.app_state.search_query.to_lowercase();
                         let search_query = search_query.trim();
@@ -912,7 +1027,9 @@ impl SoundpadGui {
                                 ui.label(RichText::new("Add sounds using the + button on files").weak().size(11.0));
                             }
                         } else {
-                            for entry_path in &files {
+                            let mut drop_target_index: Option<usize> = None;
+
+                            for (sound_index, entry_path) in files.iter().enumerate() {
                                 let file_name = entry_path
                                     .file_name()
                                     .map(|n| n.to_string_lossy())
@@ -935,8 +1052,44 @@ impl SoundpadGui {
                                     }
                                 }
 
-                                self.draw_playlist_file_row(ui, entry_path, &playlist_name);
+                                // For user playlists, wrap in drag-drop handling
+                                if is_user_playlist {
+                                    let is_being_dragged = self.app_state.dragging_sound.as_ref() == Some(entry_path);
+                                    let row_id = ui.id().with(("sound_row", entry_path));
+
+                                    let row_response = ui.horizontal(|ui| {
+                                        // Draw the row content with drag support
+                                        self.draw_playlist_file_row_draggable(ui, entry_path, playlist_name, is_being_dragged);
+                                    });
+
+                                    // Check if this row is a drop target
+                                    let row_rect = row_response.response.rect;
+                                    if let Some(ref dragging_path) = self.app_state.dragging_sound
+                                        && dragging_path != entry_path {
+                                            let interact = ui.interact(row_rect, row_id, egui::Sense::hover());
+                                            if interact.hovered() {
+                                                let line_y = row_rect.top();
+                                                ui.painter().hline(
+                                                    row_rect.x_range(),
+                                                    line_y,
+                                                    egui::Stroke::new(2.0, Color32::LIGHT_BLUE),
+                                                );
+                                                drop_target_index = Some(sound_index);
+                                            }
+                                        }
+                                } else {
+                                    self.draw_playlist_file_row(ui, entry_path, playlist_name);
+                                }
                             }
+
+                            // Handle drop for sounds
+                            if is_user_playlist && ui.input(|i| i.pointer.any_released())
+                                && let Some(dragging_path) = self.app_state.dragging_sound.take()
+                                    && let Some(target_index) = drop_target_index
+                                        && let Some(current_index) = files.iter().position(|p| p == &dragging_path)
+                                            && current_index != target_index {
+                                                self.move_sound_in_playlist(playlist_name, current_index, target_index);
+                                            }
                         }
                     } else if let Some(ref cat_name) = self.app_state.current_category.clone() {
                         // Draw category contents (legacy support)
@@ -961,7 +1114,7 @@ impl SoundpadGui {
                                         continue;
                                     }
 
-                                    self.draw_category_file_row(ui, entry_path, &cat_name);
+                                    self.draw_category_file_row(ui, entry_path, cat_name);
                                 }
                             }
                         }
@@ -973,23 +1126,19 @@ impl SoundpadGui {
                         let search_query = self.app_state.search_query.to_lowercase();
                         let search_query = search_query.trim();
 
-                        // Collect favorites from current directory
-                        let favorites: Vec<_> = self.config.favorites.iter().cloned().collect();
-                        let current_dir_favorites: Vec<_> = favorites
-                            .iter()
-                            .filter(|f| files.contains(f))
+                        // Collect favorites from current directory using set intersection (O(n) instead of O(n*m))
+                        let mut current_dir_favorites: Vec<_> = self.config.favorites
+                            .intersection(&self.app_state.files)
                             .cloned()
                             .collect();
+                        current_dir_favorites.sort();
 
                         // Draw favorites section if there are any in current directory
                         if !current_dir_favorites.is_empty() && search_query.is_empty() {
                             ui.label(RichText::new("Favorites").color(Color32::GOLD).monospace());
-                            ui.add_space(4.0);
+                            ui.add_space(SPACING_SMALL);
 
-                            let mut sorted_favorites = current_dir_favorites.clone();
-                            sorted_favorites.sort();
-
-                            for entry_path in &sorted_favorites {
+                            for entry_path in &current_dir_favorites {
                                 self.draw_file_row(ui, entry_path, true);
                             }
 
@@ -1110,15 +1259,13 @@ impl SoundpadGui {
                                 .hint_text("Add tag...")
                                 .desired_width(150.0)
                         );
-                        if (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
-                            || ui.button(icons::ICON_ADD).clicked()
-                        {
-                            if !self.app_state.tag_input.is_empty() {
+                        if ((response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
+                            || ui.button(icons::ICON_ADD).clicked())
+                            && !self.app_state.tag_input.is_empty() {
                                 let tag = self.app_state.tag_input.clone();
                                 self.add_sound_tag(&file_path, &tag);
                                 self.app_state.tag_input.clear();
                             }
-                        }
                     });
 
                     ui.add_space(8.0);
@@ -1223,11 +1370,10 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(&display_name);
-            if let Some(current_file) = &self.app_state.selected_file {
-                if current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file
+                && current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
-            }
 
             let file_button = Button::new(file_button_text).frame(false);
             let file_button_response = ui.add(file_button);
@@ -1307,11 +1453,10 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(file_name.to_string());
-            if let Some(current_file) = &self.app_state.selected_file {
-                if current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file
+                && current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
-            }
 
             // Show warning if file doesn't exist
             if !entry_path.exists() {
@@ -1325,6 +1470,145 @@ impl SoundpadGui {
                 self.app_state.selected_file = Some(entry_path.clone());
             }
         });
+    }
+
+    /// Draw playlist file row with draggable filename (for user playlists)
+    fn draw_playlist_file_row_draggable(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str, is_being_dragged: bool) {
+        // Get display name (custom name or filename)
+        let display_name = self.config.sound_metadata.get(entry_path)
+            .and_then(|m| m.custom_name.clone())
+            .unwrap_or_else(|| {
+                entry_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
+
+        let is_favorite = self.is_favorite(entry_path);
+
+        // Favorite toggle button (star icon)
+        let star_icon = if is_favorite {
+            RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+        } else {
+            RichText::new(icons::ICON_STAR_BORDER).size(14.0)
+        };
+        let star_button = Button::new(star_icon).frame(false);
+        let star_response = ui.add_sized([18.0, 18.0], star_button);
+        if star_response.clicked() {
+            self.toggle_favorite(&entry_path.clone());
+        }
+        let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+        if star_response.hovered() {
+            star_response.on_hover_text(hover_text);
+        }
+
+        // Preview button (speakers only)
+        let preview_button =
+            Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
+                .frame(false);
+        let preview_response = ui.add_sized([18.0, 18.0], preview_button);
+        if preview_response.clicked() {
+            self.preview_file(entry_path);
+        }
+        if preview_response.hovered() {
+            preview_response.on_hover_text("Preview (speakers only)");
+        }
+
+        // Individual volume slider - get once and reuse
+        let custom_volume = self.get_sound_volume(entry_path);
+        let current_volume = custom_volume.unwrap_or(1.0);
+        let has_custom_volume = custom_volume.is_some();
+
+        // Volume icon (shows if custom volume is set)
+        let vol_icon = if has_custom_volume {
+            RichText::new(icons::ICON_VOLUME_DOWN).size(14.0).color(Color32::LIGHT_BLUE)
+        } else {
+            RichText::new(icons::ICON_VOLUME_MUTE).size(14.0).weak()
+        };
+        let vol_button = Button::new(vol_icon).frame(false);
+        let vol_response = ui.add_sized([18.0, 18.0], vol_button);
+
+        // Right-click to reset to global volume
+        if vol_response.secondary_clicked() && has_custom_volume {
+            self.set_sound_volume(&entry_path.clone(), None);
+        }
+
+        vol_response.on_hover_text(if has_custom_volume {
+            format!("Volume: {:.0}% (right-click to reset)", current_volume * 100.0)
+        } else {
+            "Volume: using global (drag slider to set)".to_string()
+        });
+
+        // Compact volume slider
+        let mut vol = current_volume;
+        let slider = Slider::new(&mut vol, 0.0..=1.0)
+            .show_value(false)
+            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+        let slider_response = ui.add_sized([60.0, 14.0], slider);
+
+        if slider_response.drag_stopped() {
+            self.set_sound_volume(&entry_path.clone(), Some(vol));
+        }
+
+        // Remove from playlist button
+        let remove_button =
+            Button::new(RichText::new(icons::ICON_REMOVE_CIRCLE_OUTLINE).size(14.0).color(Color32::LIGHT_RED))
+                .frame(false);
+        let remove_response = ui.add_sized([18.0, 18.0], remove_button);
+        if remove_response.clicked() {
+            self.remove_from_playlist(playlist_name, entry_path);
+        }
+        if remove_response.hovered() {
+            remove_response.on_hover_text("Remove from playlist");
+        }
+
+        // File name label - draggable and clickable
+        let mut file_label_text = RichText::new(&display_name);
+        if let Some(current_file) = &self.app_state.selected_file
+            && current_file == entry_path {
+                file_label_text = file_label_text.color(Color32::WHITE);
+            }
+        if is_being_dragged {
+            file_label_text = file_label_text.color(Color32::YELLOW);
+        }
+
+        // Show warning if file doesn't exist
+        if !entry_path.exists() {
+            file_label_text = file_label_text.color(Color32::DARK_RED).strikethrough();
+        }
+
+        let file_label = Label::new(file_label_text).sense(egui::Sense::click_and_drag());
+        let file_response = ui.add(file_label);
+
+        // Handle click to play
+        if file_response.clicked() && entry_path.exists() && !is_being_dragged {
+            self.play_file(entry_path);
+            self.app_state.selected_file = Some(entry_path.clone());
+        }
+
+        // Handle drag
+        if file_response.drag_started() {
+            self.app_state.dragging_sound = Some(entry_path.clone());
+        }
+
+        // Show drag cursor
+        if file_response.hovered() && !file_response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if file_response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+
+        // Show tags if any
+        if let Some(metadata) = self.config.sound_metadata.get(entry_path)
+            && !metadata.tags.is_empty() {
+                ui.add_space(4.0);
+                let tags_text: Vec<String> = metadata.tags.iter()
+                    .take(3)
+                    .map(|t| format!("#{}", t))
+                    .collect();
+                ui.label(RichText::new(tags_text.join(" ")).weak().size(10.0));
+            }
     }
 
     fn draw_playlist_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str) {
@@ -1372,14 +1656,19 @@ impl SoundpadGui {
                 preview_response.on_hover_text("Preview (speakers only)");
             }
 
-            // Add to playlist button (context menu)
+            // Add to playlist button (popup menu on click)
             if is_all_sounds {
                 let add_to_playlist_button =
                     Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0))
                         .frame(false);
                 let add_response = ui.add_sized([18.0, 18.0], add_to_playlist_button);
 
-                add_response.context_menu(|ui| {
+                // Use from_toggle_button_response which handles click-to-toggle automatically
+                let popup = egui::Popup::from_toggle_button_response(&add_response)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+
+                popup.show(|ui| {
+                    ui.set_min_width(120.0);
                     ui.label(RichText::new("Add to playlist:").weak().size(11.0));
                     ui.separator();
                     let mut playlists: Vec<_> = self.config.categories.keys().cloned().collect();
@@ -1390,20 +1679,21 @@ impl SoundpadGui {
                         for pl_name in &playlists {
                             if ui.button(pl_name).clicked() {
                                 self.add_to_playlist(pl_name, entry_path);
-                                ui.close();
+                                egui::Popup::close_all(ui.ctx());
                             }
                         }
                     }
                 });
 
                 if add_response.hovered() {
-                    add_response.on_hover_text("Add to playlist (right-click)");
+                    add_response.on_hover_text("Add to playlist");
                 }
             }
 
-            // Individual volume slider
-            let current_volume = self.get_sound_volume(entry_path).unwrap_or(1.0);
-            let has_custom_volume = self.get_sound_volume(entry_path).is_some();
+            // Individual volume slider - get once and reuse
+            let custom_volume = self.get_sound_volume(entry_path);
+            let current_volume = custom_volume.unwrap_or(1.0);
+            let has_custom_volume = custom_volume.is_some();
 
             // Volume icon (shows if custom volume is set)
             let vol_icon = if has_custom_volume {
@@ -1462,11 +1752,10 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(&display_name);
-            if let Some(current_file) = &self.app_state.selected_file {
-                if current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file
+                && current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
-            }
 
             // Show warning if file doesn't exist
             if !entry_path.exists() {
@@ -1481,8 +1770,8 @@ impl SoundpadGui {
             }
 
             // Show tags if any
-            if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
-                if !metadata.tags.is_empty() {
+            if let Some(metadata) = self.config.sound_metadata.get(entry_path)
+                && !metadata.tags.is_empty() {
                     ui.add_space(4.0);
                     let tags_text: Vec<String> = metadata.tags.iter()
                         .take(3)
@@ -1490,7 +1779,6 @@ impl SoundpadGui {
                         .collect();
                     ui.label(RichText::new(tags_text.join(" ")).weak().size(10.0));
                 }
-            }
         });
     }
 

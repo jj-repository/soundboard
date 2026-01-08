@@ -1,4 +1,4 @@
-use crate::gui::SoundpadGui;
+use crate::gui::{MutexExt, SoundpadGui};
 use eframe::{App, Frame as EFrame};
 use egui::{CentralPanel, Context};
 use pwsp::{
@@ -19,7 +19,7 @@ impl App for SoundpadGui {
         self.poll_update_status();
 
         {
-            let guard = self.audio_player_state_shared.lock().unwrap();
+            let guard = self.audio_player_state_shared.lock_or_recover();
             self.audio_player_state = guard.clone();
         }
 
@@ -64,7 +64,7 @@ impl App for SoundpadGui {
 
         if self.app_state.position_dragged {
             make_request_sync(Request::seek(self.app_state.position_slider_value)).ok();
-            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            let mut guard = self.audio_player_state_shared.lock_or_recover();
             guard.new_position = Some(self.app_state.position_slider_value);
             guard.position = self.app_state.position_slider_value;
             self.app_state.position_dragged = false;
@@ -77,7 +77,7 @@ impl App for SoundpadGui {
 
             make_request_sync(Request::set_volume(new_volume)).ok();
 
-            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            let mut guard = self.audio_player_state_shared.lock_or_recover();
             guard.new_volume = Some(self.app_state.volume_slider_value);
             guard.volume = self.app_state.volume_slider_value;
 
@@ -97,7 +97,7 @@ impl App for SoundpadGui {
 
             make_request_sync(Request::set_gain(new_gain)).ok();
 
-            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            let mut guard = self.audio_player_state_shared.lock_or_recover();
             guard.new_gain = Some(self.app_state.gain_slider_value);
             guard.gain = self.app_state.gain_slider_value;
 
@@ -117,7 +117,7 @@ impl App for SoundpadGui {
 
             make_request_sync(Request::set_mic_gain(new_mic_gain)).ok();
 
-            let mut guard = self.audio_player_state_shared.lock().unwrap();
+            let mut guard = self.audio_player_state_shared.lock_or_recover();
             guard.new_mic_gain = Some(self.app_state.mic_gain_slider_value);
             guard.mic_gain = self.app_state.mic_gain_slider_value;
 

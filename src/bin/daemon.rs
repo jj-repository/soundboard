@@ -7,7 +7,7 @@ use pwsp::{
         commands::parse_command,
         daemon::{
             create_runtime_dir, get_audio_player, get_daemon_config, get_runtime_dir,
-            is_daemon_running, link_player_to_virtual_mic,
+            init_audio_player, is_daemon_running, link_player_to_virtual_mic,
         },
         pipewire::create_virtual_mic,
     },
@@ -29,7 +29,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     get_daemon_config(); // Initialize daemon config
     create_virtual_mic()?;
-    get_audio_player().await; // Initialize audio player
+
+    // Initialize audio player with proper error handling
+    if let Err(e) = init_audio_player().await {
+        eprintln!("Failed to initialize audio player: {}", e);
+        return Err(format!("Cannot start daemon: audio player initialization failed: {}", e).into());
+    }
+
     link_player_to_virtual_mic().await?;
 
     let runtime_dir = get_runtime_dir();
@@ -123,7 +129,6 @@ async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
             }
             if stream.write_all(&response_data).await.is_err() {
                 eprintln!("Failed to write response to client!");
-                return;
             }
             // ---------- Send response (end) ----------
         });
@@ -132,7 +137,7 @@ async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
 
 async fn player_loop() {
     loop {
-        let mut audio_player = get_audio_player().await.lock().await;
+        let mut audio_player = get_audio_player().lock().await;
 
         // Start playback again if loop is enabled
         if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {

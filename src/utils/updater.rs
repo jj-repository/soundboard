@@ -105,7 +105,7 @@ pub async fn download_update(
     // Get filename from URL
     let filename = download_url
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("pwsp-update");
 
     // Create temp directory for download

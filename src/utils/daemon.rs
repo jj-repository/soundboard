@@ -17,19 +17,34 @@ use tokio::{
 
 static AUDIO_PLAYER: OnceCell<Mutex<AudioPlayer>> = OnceCell::const_new();
 
-pub async fn get_audio_player() -> &'static Mutex<AudioPlayer> {
-    AUDIO_PLAYER
-        .get_or_init(|| async {
-            println!("Initializing audio player");
-            match AudioPlayer::new().await {
-                Ok(player) => Mutex::new(player),
-                Err(e) => {
-                    eprintln!("Failed to initialize audio player: {}", e);
-                    panic!("Cannot continue without audio player: {}", e);
-                }
-            }
-        })
+/// Initialize the audio player. Must be called before get_audio_player().
+/// Returns an error if initialization fails.
+pub async fn init_audio_player() -> Result<(), Box<dyn Error + Send + Sync>> {
+    if AUDIO_PLAYER.get().is_some() {
+        return Ok(()); // Already initialized
+    }
+
+    println!("Initializing audio player");
+    let player = AudioPlayer::new()
         .await
+        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+    AUDIO_PLAYER
+        .set(Mutex::new(player))
+        .map_err(|_| -> Box<dyn Error + Send + Sync> { "Audio player already initialized".into() })?;
+    Ok(())
+}
+
+/// Get the audio player. Panics if init_audio_player() was not called first.
+/// Use try_get_audio_player() for a fallible version.
+pub fn get_audio_player() -> &'static Mutex<AudioPlayer> {
+    AUDIO_PLAYER
+        .get()
+        .expect("Audio player not initialized. Call init_audio_player() first.")
+}
+
+/// Try to get the audio player, returning None if not initialized.
+pub fn try_get_audio_player() -> Option<&'static Mutex<AudioPlayer>> {
+    AUDIO_PLAYER.get()
 }
 
 pub fn get_daemon_config() -> DaemonConfig {

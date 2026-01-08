@@ -87,6 +87,15 @@ pub struct AppState {
     pub show_sounds_folder_setup: bool,
     /// Temporary path for sounds folder selection during setup
     pub pending_sounds_folder: Option<PathBuf>,
+
+    /// Playlist being dragged (for reordering)
+    pub dragging_playlist: Option<String>,
+    /// Sound being dragged (for reordering within playlist)
+    pub dragging_sound: Option<PathBuf>,
+
+    /// Cached sorted files list (invalidated when files change)
+    /// This avoids sorting on every frame render
+    pub sorted_files_cache: Option<Vec<PathBuf>>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -114,4 +123,9 @@ pub struct AudioPlayerState {
     pub all_outputs: HashMap<String, String>,
 
     pub layers: Vec<LayerInfo>,
+
+    /// Whether we're currently connected to the daemon
+    pub daemon_connected: bool,
+    /// Last error message from daemon communication (if any)
+    pub last_error: Option<String>,
 }
