@@ -45,7 +45,7 @@ three main components:
 ## **Pre-built Packages**
 
 You can download pre-built binaries, .deb and .rpm packages from
-the [releases page](https://github.com/arabianq/pipewire-soundpad/releases).
+the [releases page](https://github.com/jj-repository/soundboard/releases).
 
 ## **Fedora Linux**
 
@@ -176,8 +176,10 @@ pwsp-cli --help
 # **🤝 Contributing**
 
 Contributions are welcome\! If you have ideas for improvements or find a bug, feel free to create
-an [issue](https://github.com/arabianq/pipewire-soundpad/issues) or submit
-a [pull request](https://github.com/arabianq/pipewire-soundpad/pulls).
+an [issue](https://github.com/jj-repository/soundboard/issues) or submit
+a [pull request](https://github.com/jj-repository/soundboard/pulls).
+
+Originally forked from [arabianq/pipewire-soundpad](https://github.com/arabianq/pipewire-soundpad).
 
 # **📜 License**
 
