@@ -24,6 +24,7 @@ chats on platforms like **Discord, Zoom, or Teamspeak**.
     * **Position slider** to fast-forward or rewind the audio.
 * **Persistent Configuration**: The list of added directories and your selected audio output device are saved
   automatically, so you won't need to reconfigure them every time you launch the application.
+* **Built-in Update System**: Check for updates with progress tracking and download pre-built binaries directly from GitHub Releases. Toggle automatic update checking on startup via settings.
 
 # **⚙️ How It Works**
 
@@ -172,6 +173,25 @@ pwsp-cli --help
       ```bash 
       pwsp-cli set position 20
       ```
+
+# **🔄 Updates**
+
+PWSP includes a built-in update checker that can download new versions directly from GitHub.
+
+### Checking for Updates
+1. Open the **Settings** panel in the GUI
+2. Click **"Check for Updates"**
+3. If an update is available, click **"Download"** to get the new version
+4. The downloaded file will be saved to your temp directory
+
+### Auto-Update on Startup
+Enable **"Check for Updates on Startup"** in Settings to automatically check for new versions when the application launches.
+
+### Manual Installation
+After downloading an update:
+- **.tar.gz**: Extract and replace your existing binaries
+- **.deb**: Install with `sudo dpkg -i <file>.deb`
+- **.rpm**: Install with `sudo rpm -U <file>.rpm`
 
 # **🤝 Contributing**
 
