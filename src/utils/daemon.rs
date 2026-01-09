@@ -114,10 +114,16 @@ pub fn get_runtime_dir() -> PathBuf {
 }
 
 pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
     let runtime_dir = get_runtime_dir();
     if !runtime_dir.exists() {
         fs::create_dir_all(&runtime_dir)?;
     }
+
+    // Security: Ensure runtime directory is owner-only (0700)
+    // This prevents other users from accessing socket and lock files
+    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))?;
 
     Ok(())
 }

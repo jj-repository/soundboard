@@ -12,7 +12,7 @@ use pwsp::{
         pipewire::create_virtual_mic,
     },
 };
-use std::{error::Error, fs, time::Duration};
+use std::{error::Error, fs, os::unix::fs::PermissionsExt, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
@@ -49,6 +49,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let listener = UnixListener::bind(&socket_path)?;
+
+    // Security: Set socket permissions to owner-only (0600)
+    // This prevents other users from connecting to the daemon
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+
     println!(
         "Daemon started. Listening on {}",
         socket_path.to_str().unwrap_or_default()
