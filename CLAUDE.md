@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **PWSP (PipeWire SoundPad)** is a Rust application for playing audio files through your microphone on Linux. It uses PipeWire for audio routing and features both CLI and GUI clients with a daemon architecture.
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 
 ## Files Structure
 
