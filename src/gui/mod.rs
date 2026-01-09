@@ -91,6 +91,8 @@ struct SoundpadGui {
     pub tray_handle: Option<TrayHandle>,
     pub hotkey_manager: Option<HotkeyManager>,
     pub update_receiver: Option<mpsc::Receiver<UpdateStatus>>,
+    /// Flag to track if startup update check has been performed
+    pub startup_update_checked: bool,
 }
 
 impl SoundpadGui {
@@ -133,6 +135,7 @@ impl SoundpadGui {
             tray_handle,
             hotkey_manager,
             update_receiver: None,
+            startup_update_checked: false,
         }
     }
 

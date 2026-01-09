@@ -48,6 +48,9 @@ path = "src/bin/cli.rs"
 name = "pwsp-gui"
 path = "src/main.rs"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 strip = true
 lto = true

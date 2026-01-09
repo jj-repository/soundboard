@@ -203,6 +203,13 @@ pub struct GuiConfig {
     /// Order of playlists (by name)
     #[serde(default)]
     pub playlist_order: Vec<String>,
+    /// Whether to automatically check for updates on startup
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
+}
+
+fn default_auto_check_updates() -> bool {
+    true
 }
 
 fn default_sidebar_width() -> f32 {
@@ -229,6 +236,7 @@ impl Default for GuiConfig {
             sounds_folder: None,
             sidebar_width: default_sidebar_width(),
             playlist_order: Vec::new(),
+            auto_check_updates: default_auto_check_updates(),
         }
     }
 }

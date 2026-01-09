@@ -11,6 +11,12 @@ use pwsp::{
 
 impl App for SoundpadGui {
     fn update(&mut self, ctx: &Context, _frame: &mut EFrame) {
+        // Check for updates on startup if enabled
+        if !self.startup_update_checked && self.config.auto_check_updates {
+            self.startup_update_checked = true;
+            self.check_for_updates();
+        }
+
         // Poll for tray menu actions
         self.poll_tray_messages(ctx);
         // Poll for global hotkey actions

@@ -76,6 +76,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// Maximum IPC message size (10MB) - prevents DoS via memory exhaustion
+const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
 async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
     loop {
         let (mut stream, _addr) = listener.accept().await?;
@@ -89,6 +92,12 @@ async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
             }
 
             let request_len = u32::from_le_bytes(len_bytes) as usize;
+
+            // Security: Prevent DoS via excessive memory allocation
+            if request_len > MAX_IPC_MESSAGE_SIZE {
+                eprintln!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
+                return;
+            }
 
             let mut buffer = vec![0u8; request_len];
             if stream.read_exact(&mut buffer).await.is_err() {

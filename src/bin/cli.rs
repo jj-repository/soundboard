@@ -106,8 +106,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Actions::Resume => Request::resume(),
             Actions::TogglePause => Request::toggle_pause(),
             Actions::Stop => Request::stop(),
-            Actions::Play { file_path } => Request::play(file_path.to_str().unwrap()),
-            Actions::Preview { file_path } => Request::preview(file_path.to_str().unwrap()),
+            Actions::Play { file_path } => {
+                let path_str = file_path
+                    .to_str()
+                    .ok_or("File path contains invalid UTF-8 characters")?;
+                Request::play(path_str)
+            }
+            Actions::Preview { file_path } => {
+                let path_str = file_path
+                    .to_str()
+                    .ok_or("File path contains invalid UTF-8 characters")?;
+                Request::preview(path_str)
+            }
             Actions::ToggleLoop => Request::toggle_loop(),
         },
         Commands::Get { parameter } => match parameter {

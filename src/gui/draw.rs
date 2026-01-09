@@ -336,6 +336,13 @@ impl SoundpadGui {
                 ui.label(format!("Current version: v{}", get_current_version()));
             });
 
+            // Auto-check updates toggle
+            let mut auto_check = self.config.auto_check_updates;
+            if ui.checkbox(&mut auto_check, "Check for updates on startup").changed() {
+                self.config.auto_check_updates = auto_check;
+                let _ = self.config.save_to_file();
+            }
+
             match &self.app_state.update_status {
                 UpdateStatus::NotChecked => {
                     if ui.button("Check for updates").clicked() {
