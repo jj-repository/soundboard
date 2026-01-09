@@ -53,7 +53,7 @@ const SUPPORTED_EXTENSIONS: [&str; 13] = [
 /// Validates that a path is safely within an allowed base directory.
 /// Returns the canonicalized path if valid, or None if the path escapes the base directory.
 fn validate_path_within(path: &Path, base_dir: &Path) -> Option<PathBuf> {
-    // Canonicalize both paths to resolve symlinks and normalize
+    // Canonicalize base directory to resolve symlinks and normalize
     let canonical_base = match base_dir.canonicalize() {
         Ok(p) => p,
         Err(_) => return None,
@@ -62,14 +62,27 @@ fn validate_path_within(path: &Path, base_dir: &Path) -> Option<PathBuf> {
     let canonical_path = match path.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            // If path doesn't exist yet, check the parent directory
+            // If path doesn't exist yet, check the parent directory and construct safe path
             if let Some(parent) = path.parent() {
                 let canonical_parent = parent.canonicalize().ok()?;
                 if !canonical_parent.starts_with(&canonical_base) {
                     return None;
                 }
-                // Return the original path since file doesn't exist yet
-                return Some(path.to_path_buf());
+                // Get just the filename to prevent path traversal via filename
+                let file_name = path.file_name()?;
+                let file_name_str = file_name.to_str()?;
+                // Reject filenames containing path separators or traversal sequences
+                if file_name_str.contains('/') || file_name_str.contains('\\')
+                    || file_name_str.contains('\0') || file_name_str == ".." || file_name_str == "." {
+                    return None;
+                }
+                // Construct safe path: canonical parent + safe filename
+                let safe_path = canonical_parent.join(file_name);
+                // Double-check the result is still within base
+                if !safe_path.starts_with(&canonical_base) {
+                    return None;
+                }
+                return Some(safe_path);
             }
             return None;
         }
@@ -335,7 +348,9 @@ impl SoundpadGui {
         if self.config.save_input {
             let mut daemon_config = get_daemon_config();
             daemon_config.default_input_name = Some(name);
-            daemon_config.save_to_file().ok();
+            if let Err(e) = daemon_config.save_to_file() {
+                eprintln!("Failed to save daemon config: {}", e);
+            }
         }
     }
 
@@ -345,7 +360,9 @@ impl SoundpadGui {
         // Save output preference to daemon config
         let mut daemon_config = get_daemon_config();
         daemon_config.default_output_name = Some(name);
-        daemon_config.save_to_file().ok();
+        if let Err(e) = daemon_config.save_to_file() {
+            eprintln!("Failed to save daemon config: {}", e);
+        }
     }
 
     pub fn toggle_loop(&mut self) {
@@ -394,7 +411,9 @@ impl SoundpadGui {
                 self.invalidate_files_cache();
             }
         }
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     pub fn is_favorite(&self, path: &PathBuf) -> bool {
@@ -410,14 +429,18 @@ impl SoundpadGui {
     pub fn add_to_category(&mut self, category_name: &str, path: &Path) {
         if let Some(category) = self.config.categories.get_mut(category_name) {
             category.add_sound(path.to_path_buf());
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
     pub fn remove_from_category(&mut self, category_name: &str, path: &PathBuf) {
         if let Some(category) = self.config.categories.get_mut(category_name) {
             category.remove_sound(path);
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -484,7 +507,9 @@ impl SoundpadGui {
             self.config.categories.insert(name.to_string(), SoundCategory::new(name));
             // Add to playlist order
             self.config.playlist_order.push(name.to_string());
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -498,7 +523,9 @@ impl SoundpadGui {
             self.app_state.files.clear();
             self.invalidate_files_cache();
         }
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     /// Rename a playlist
@@ -514,7 +541,9 @@ impl SoundpadGui {
                 if let Some(pos) = self.config.playlist_order.iter().position(|n| n == old_name) {
                     self.config.playlist_order[pos] = new_name.to_string();
                 }
-                self.config.save_to_file().ok();
+                if let Err(e) = self.config.save_to_file() {
+                    eprintln!("Failed to save config: {}", e);
+                }
             }
     }
 
@@ -551,7 +580,9 @@ impl SoundpadGui {
 
         let playlist = self.config.playlist_order.remove(from_index);
         self.config.playlist_order.insert(to_index, playlist);
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     /// Sync playlist_order to contain all playlists
@@ -574,7 +605,9 @@ impl SoundpadGui {
         }
         if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
             playlist.add_sound(path.to_path_buf());
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -589,7 +622,9 @@ impl SoundpadGui {
             }
             let sound = playlist.sounds.remove(from_index);
             playlist.sounds.insert(to_index, sound);
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -604,7 +639,9 @@ impl SoundpadGui {
             // Just remove from playlist
             if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
                 playlist.remove_sound(path);
-                self.config.save_to_file().ok();
+                if let Err(e) = self.config.save_to_file() {
+                    eprintln!("Failed to save config: {}", e);
+                }
             }
         }
         // Remove from current files view
@@ -649,7 +686,9 @@ impl SoundpadGui {
         // Remove metadata
         self.config.sound_metadata.remove(path);
 
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
 
         // Remove from current files view
         self.app_state.files.remove(path);
@@ -662,13 +701,17 @@ impl SoundpadGui {
         if metadata.is_empty() {
             self.config.sound_metadata.remove(path);
         }
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     pub fn add_sound_tag(&mut self, path: &Path, tag: &str) {
         let metadata = self.config.sound_metadata.entry(path.to_path_buf()).or_default();
         metadata.add_tag(tag);
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     pub fn remove_sound_tag(&mut self, path: &PathBuf, tag: &str) {
@@ -677,7 +720,9 @@ impl SoundpadGui {
             if metadata.is_empty() {
                 self.config.sound_metadata.remove(path);
             }
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                eprintln!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -703,7 +748,9 @@ impl SoundpadGui {
         if metadata.is_empty() {
             self.config.sound_metadata.remove(path);
         }
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
     }
 
     // ============= Sounds Folder Methods =============
@@ -858,7 +905,9 @@ impl SoundpadGui {
         }
 
         self.config.sounds_folder = Some(path.clone());
-        self.config.save_to_file().ok();
+        if let Err(e) = self.config.save_to_file() {
+            eprintln!("Failed to save config: {}", e);
+        }
 
         // Open the "All Sounds" playlist
         self.open_playlist("All Sounds");

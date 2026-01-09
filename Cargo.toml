@@ -1,7 +1,7 @@
 [package]
 name = "pwsp"
 version = "1.5.0"
-edition = "2024"
+edition = "2021"
 authors = ["arabian"]
 description = "PWSP lets you play audio files through your microphone. Has both CLI and GUI clients."
 readme = "README.md"

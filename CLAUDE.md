@@ -163,9 +163,24 @@ fn validate_audio_path(path_str: &str) -> Option<PathBuf>
 - Verifies is a file (not directory)
 - Validates audio extension (mp3, wav, ogg, flac, m4a, aac, opus)
 
+### Sound File Path Validation
+```rust
+// src/gui/mod.rs
+fn validate_path_within(path: &Path, base_dir: &Path) -> Option<PathBuf>
+```
+
+**Checks:**
+- Validates filename contains no path separators or traversal characters
+- Canonicalizes parent directory
+- Constructs safe path from canonical parent + validated filename
+- Prevents path traversal via malicious filenames
+
 ### IPC Security
 - Buffer size limits on socket reads
 - Input validation on all commands
+
+### Error Handling
+- All config save operations log errors instead of silently failing
 
 ## Async Pattern
 
@@ -202,7 +217,6 @@ cargo test -- --nocapture  # Show println output
 1. **No auto_check_updates toggle**: Always requires manual check
 2. **No startup update check**: User must manually check for updates
 3. **Binary updates only**: Downloads release assets, requires manual install
-4. **Rust 2024 edition**: Uses latest Rust edition for let chains
 
 ## Common Development Tasks
 
