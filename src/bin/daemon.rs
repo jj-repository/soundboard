@@ -40,8 +40,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let runtime_dir = get_runtime_dir();
 
-    let lock_file = fs::File::create(runtime_dir.join("daemon.lock"))?;
-    lock_file.lock()?;
+    // Lock file must remain in scope for entire daemon lifetime - dropping releases the lock
+    let _lock_file = fs::File::create(runtime_dir.join("daemon.lock"))?;
+    _lock_file.lock()?;
 
     let socket_path = runtime_dir.join("daemon.sock");
     if fs::metadata(&socket_path).is_ok() {
