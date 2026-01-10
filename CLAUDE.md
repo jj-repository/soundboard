@@ -176,8 +176,10 @@ fn validate_path_within(path: &Path, base_dir: &Path) -> Option<PathBuf>
 - Prevents path traversal via malicious filenames
 
 ### IPC Security
-- Buffer size limits on socket reads
+- Buffer size limits on socket reads (10MB max)
+- Response size validation on client side
 - Input validation on all commands
+- Download filename sanitization to prevent path traversal
 
 ### Error Handling
 - All config save operations log errors instead of silently failing
@@ -203,8 +205,9 @@ if let Ok(status) = rx.try_recv() {
 ## Testing
 
 **Test Files:**
-- `src/utils/commands.rs` - 9 tests for path validation
-- `src/utils/config.rs` - 3 tests for config path
+- `src/utils/commands.rs` - Tests for path validation and command parsing
+- `src/utils/config.rs` - Tests for config path
+- Total: 91 tests
 
 **Running Tests:**
 ```bash
@@ -217,6 +220,12 @@ cargo test -- --nocapture  # Show println output
 1. **No auto_check_updates toggle**: Always requires manual check
 2. **No startup update check**: User must manually check for updates
 3. **Binary updates only**: Downloads release assets, requires manual install
+
+## Recent Fixes (January 2026)
+
+- Fixed panic-prone `.unwrap()` calls on RwLock in hotkeys module (now uses graceful recovery)
+- Added response size validation on client side to prevent memory exhaustion attacks
+- Added download filename sanitization to prevent directory traversal in updater
 
 ## Common Development Tasks
 

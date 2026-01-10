@@ -484,19 +484,21 @@ impl SoundpadGui {
     /// Load all sounds from the sounds folder
     fn load_all_sounds(&mut self) {
         self.app_state.files.clear();
-        if let Some(ref sounds_folder) = self.config.sounds_folder
-            && let Ok(entries) = sounds_folder.read_dir() {
+        if let Some(ref sounds_folder) = self.config.sounds_folder {
+            if let Ok(entries) = sounds_folder.read_dir() {
                 for entry in entries.filter_map(|e| e.ok()) {
                     let path = entry.path();
                     if path.is_file() {
                         // Check if it's a supported audio file
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str())
-                            && SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
                                 self.app_state.files.insert(path);
                             }
+                        }
                     }
                 }
             }
+        }
         self.invalidate_files_cache();
     }
 
@@ -530,8 +532,8 @@ impl SoundpadGui {
 
     /// Rename a playlist
     pub fn rename_playlist(&mut self, old_name: &str, new_name: &str) {
-        if !new_name.is_empty() && new_name != "All Sounds" && !self.config.categories.contains_key(new_name)
-            && let Some(mut playlist) = self.config.categories.remove(old_name) {
+        if !new_name.is_empty() && new_name != "All Sounds" && !self.config.categories.contains_key(new_name) {
+            if let Some(mut playlist) = self.config.categories.remove(old_name) {
                 playlist.name = new_name.to_string();
                 self.config.categories.insert(new_name.to_string(), playlist);
                 if self.app_state.current_playlist.as_deref() == Some(old_name) {
@@ -545,6 +547,7 @@ impl SoundpadGui {
                     eprintln!("Failed to save config: {}", e);
                 }
             }
+        }
     }
 
     /// Get playlists in their configured order
@@ -763,11 +766,12 @@ impl SoundpadGui {
         };
 
         // Ensure directory exists
-        if !sounds_folder.exists()
-            && let Err(e) = std::fs::create_dir_all(&sounds_folder) {
+        if !sounds_folder.exists() {
+            if let Err(e) = std::fs::create_dir_all(&sounds_folder) {
                 eprintln!("Failed to create sounds folder: {}", e);
                 return;
             }
+        }
 
         let mut imported = 0;
         let mut skipped = 0;

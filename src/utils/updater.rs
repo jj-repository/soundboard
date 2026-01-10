@@ -102,11 +102,23 @@ pub async fn download_update(
 
     let total_size = response.content_length().unwrap_or(0);
 
-    // Get filename from URL
-    let filename = download_url
+    // Get filename from URL and sanitize to prevent directory traversal
+    let raw_filename = download_url
         .split('/')
         .next_back()
         .unwrap_or("pwsp-update");
+
+    // Sanitize filename: remove path separators and traversal sequences
+    let filename: String = raw_filename
+        .chars()
+        .filter(|c| *c != '/' && *c != '\\' && *c != '\0')
+        .collect();
+    let filename = filename.trim_start_matches('.'); // Remove leading dots
+    let filename = if filename.is_empty() {
+        "pwsp-update"
+    } else {
+        &filename
+    };
 
     // Create temp directory for download
     let temp_dir = std::env::temp_dir().join("pwsp-updates");

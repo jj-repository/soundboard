@@ -83,11 +83,17 @@ impl HotkeyManager {
     }
 
     fn register_hotkeys(&mut self, config: &HotkeyConfig) {
-        let mut ids = self.ids.write().unwrap();
+        let mut ids = match self.ids.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("Warning: Hotkey IDs lock was poisoned during register, recovering...");
+                poisoned.into_inner()
+            }
+        };
 
         // Register Play/Pause hotkey
-        if let Some(ref binding) = config.play_pause
-            && let Some(hotkey) = binding_to_hotkey(binding) {
+        if let Some(ref binding) = config.play_pause {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
                 ids.play_pause_id = Some(hotkey.id());
                 self.play_pause_binding = Some(binding.clone());
                 if let Err(e) = self.manager.register(hotkey) {
@@ -100,10 +106,11 @@ impl HotkeyManager {
                     self.play_pause_binding = None;
                 }
             }
+        }
 
         // Register Stop hotkey
-        if let Some(ref binding) = config.stop
-            && let Some(hotkey) = binding_to_hotkey(binding) {
+        if let Some(ref binding) = config.stop {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
                 ids.stop_id = Some(hotkey.id());
                 self.stop_binding = Some(binding.clone());
                 if let Err(e) = self.manager.register(hotkey) {
@@ -116,23 +123,32 @@ impl HotkeyManager {
                     self.stop_binding = None;
                 }
             }
+        }
     }
 
     fn unregister_hotkeys(&mut self) {
-        let mut ids = self.ids.write().unwrap();
+        let mut ids = match self.ids.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("Warning: Hotkey IDs lock was poisoned during unregister, recovering...");
+                poisoned.into_inner()
+            }
+        };
 
         // Unregister Play/Pause hotkey
-        if let Some(ref binding) = self.play_pause_binding.take()
-            && let Some(hotkey) = binding_to_hotkey(binding) {
+        if let Some(ref binding) = self.play_pause_binding.take() {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
                 let _ = self.manager.unregister(hotkey);
             }
+        }
         ids.play_pause_id = None;
 
         // Unregister Stop hotkey
-        if let Some(ref binding) = self.stop_binding.take()
-            && let Some(hotkey) = binding_to_hotkey(binding) {
+        if let Some(ref binding) = self.stop_binding.take() {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
                 let _ = self.manager.unregister(hotkey);
             }
+        }
         ids.stop_id = None;
     }
 

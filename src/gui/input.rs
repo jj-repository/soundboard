@@ -82,10 +82,11 @@ impl SoundpadGui {
                 self.app_state.show_settings = !self.app_state.show_settings;
             }
 
-            if i.key_pressed(Key::Enter)
-                && let Some(selected_file) = self.app_state.selected_file.clone() {
+            if i.key_pressed(Key::Enter) {
+                if let Some(selected_file) = self.app_state.selected_file.clone() {
                     self.play_file(&selected_file);
                 }
+            }
 
             if !self.app_state.show_settings {
                 // Pause / resume audio on space

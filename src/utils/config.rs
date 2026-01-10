@@ -2,7 +2,7 @@ use std::{error::Error, path::PathBuf};
 
 pub fn get_config_path() -> Result<PathBuf, Box<dyn Error>> {
     let config_path = dirs::config_dir()
-        .ok_or_else(|| "Failed to obtain config directory: platform may not support config dirs")?;
+        .ok_or("Failed to obtain config directory: platform may not support config dirs")?;
     Ok(config_path.join("pwsp"))
 }
 

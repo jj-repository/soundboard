@@ -88,10 +88,12 @@ impl SoundpadGui {
             if ui
                 .add_enabled(can_continue, Button::new(format!("{} Continue", icons::ICON_CHECK)))
                 .clicked()
-                && let Some(path) = self.app_state.pending_sounds_folder.take() {
+            {
+                if let Some(path) = self.app_state.pending_sounds_folder.take() {
                     self.set_sounds_folder(path);
                     self.app_state.show_sounds_folder_setup = false;
                 }
+            }
 
             ui.add_space(15.0);
 
@@ -386,10 +388,11 @@ impl SoundpadGui {
                     });
 
                     // Handle actions after UI
-                    if should_download
-                        && let Some(url) = download_url_clone {
+                    if should_download {
+                        if let Some(url) = download_url_clone {
                             self.download_update(url);
                         }
+                    }
                     if should_open_release {
                         let _ = open::that(&release_url_clone);
                     }
@@ -404,10 +407,11 @@ impl SoundpadGui {
                     let file_path = file_path.clone();
                     ui.label(RichText::new("Update downloaded!").color(Color32::GREEN));
                     ui.label(format!("Saved to: {}", file_path.display()));
-                    if ui.button("Open download location").clicked()
-                        && let Some(parent) = file_path.parent() {
+                    if ui.button("Open download location").clicked() {
+                        if let Some(parent) = file_path.parent() {
                             let _ = open::that(parent);
                         }
+                    }
                 }
                 UpdateStatus::Error(msg) => {
                     let msg = msg.clone();
@@ -854,8 +858,8 @@ impl SoundpadGui {
 
                         // Check if this row is a drop target
                         let row_rect = row_response.response.rect;
-                        if let Some(ref dragging_name) = self.app_state.dragging_playlist
-                            && dragging_name != playlist_name {
+                        if let Some(ref dragging_name) = self.app_state.dragging_playlist {
+                            if dragging_name != playlist_name {
                                 // Check if mouse is over this row
                                 let interact = ui.interact(row_rect, row_id, egui::Sense::hover());
                                 if interact.hovered() {
@@ -869,18 +873,23 @@ impl SoundpadGui {
                                     drop_target_index = Some(playlist_index);
                                 }
                             }
+                        }
                     }
                 }
 
                 // Handle drop
-                if ui.input(|i| i.pointer.any_released())
-                    && let Some(dragging_name) = self.app_state.dragging_playlist.take()
-                        && let Some(target_index) = drop_target_index { // Find current index
-                            if let Some(current_index) = playlists.iter().position(|n| n == &dragging_name)
-                                && current_index != target_index {
+                if ui.input(|i| i.pointer.any_released()) {
+                    if let Some(dragging_name) = self.app_state.dragging_playlist.take() {
+                        if let Some(target_index) = drop_target_index {
+                            // Find current index
+                            if let Some(current_index) = playlists.iter().position(|n| n == &dragging_name) {
+                                if current_index != target_index {
                                     self.move_playlist(current_index, target_index);
                                 }
+                            }
                         }
+                    }
+                }
 
                 // Add playlist button or input
                 if self.app_state.show_new_category_dialog {
@@ -1071,8 +1080,8 @@ impl SoundpadGui {
 
                                     // Check if this row is a drop target
                                     let row_rect = row_response.response.rect;
-                                    if let Some(ref dragging_path) = self.app_state.dragging_sound
-                                        && dragging_path != entry_path {
+                                    if let Some(ref dragging_path) = self.app_state.dragging_sound {
+                                        if dragging_path != entry_path {
                                             let interact = ui.interact(row_rect, row_id, egui::Sense::hover());
                                             if interact.hovered() {
                                                 let line_y = row_rect.top();
@@ -1084,19 +1093,24 @@ impl SoundpadGui {
                                                 drop_target_index = Some(sound_index);
                                             }
                                         }
+                                    }
                                 } else {
                                     self.draw_playlist_file_row(ui, entry_path, playlist_name);
                                 }
                             }
 
                             // Handle drop for sounds
-                            if is_user_playlist && ui.input(|i| i.pointer.any_released())
-                                && let Some(dragging_path) = self.app_state.dragging_sound.take()
-                                    && let Some(target_index) = drop_target_index
-                                        && let Some(current_index) = files.iter().position(|p| p == &dragging_path)
-                                            && current_index != target_index {
+                            if is_user_playlist && ui.input(|i| i.pointer.any_released()) {
+                                if let Some(dragging_path) = self.app_state.dragging_sound.take() {
+                                    if let Some(target_index) = drop_target_index {
+                                        if let Some(current_index) = files.iter().position(|p| p == &dragging_path) {
+                                            if current_index != target_index {
                                                 self.move_sound_in_playlist(playlist_name, current_index, target_index);
                                             }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else if let Some(ref cat_name) = self.app_state.current_category.clone() {
                         // Draw category contents (legacy support)
@@ -1377,10 +1391,11 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(&display_name);
-            if let Some(current_file) = &self.app_state.selected_file
-                && current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file {
+                if current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
+            }
 
             let file_button = Button::new(file_button_text).frame(false);
             let file_button_response = ui.add(file_button);
@@ -1460,10 +1475,11 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(file_name.to_string());
-            if let Some(current_file) = &self.app_state.selected_file
-                && current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file {
+                if current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
+            }
 
             // Show warning if file doesn't exist
             if !entry_path.exists() {
@@ -1571,10 +1587,11 @@ impl SoundpadGui {
 
         // File name label - draggable and clickable
         let mut file_label_text = RichText::new(&display_name);
-        if let Some(current_file) = &self.app_state.selected_file
-            && current_file == entry_path {
+        if let Some(current_file) = &self.app_state.selected_file {
+            if current_file == entry_path {
                 file_label_text = file_label_text.color(Color32::WHITE);
             }
+        }
         if is_being_dragged {
             file_label_text = file_label_text.color(Color32::YELLOW);
         }
@@ -1607,8 +1624,8 @@ impl SoundpadGui {
         }
 
         // Show tags if any
-        if let Some(metadata) = self.config.sound_metadata.get(entry_path)
-            && !metadata.tags.is_empty() {
+        if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
+            if !metadata.tags.is_empty() {
                 ui.add_space(4.0);
                 let tags_text: Vec<String> = metadata.tags.iter()
                     .take(3)
@@ -1616,6 +1633,7 @@ impl SoundpadGui {
                     .collect();
                 ui.label(RichText::new(tags_text.join(" ")).weak().size(10.0));
             }
+        }
     }
 
     fn draw_playlist_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str) {
@@ -1759,10 +1777,11 @@ impl SoundpadGui {
 
             // File name button (play through virtual mic)
             let mut file_button_text = RichText::new(&display_name);
-            if let Some(current_file) = &self.app_state.selected_file
-                && current_file == entry_path {
+            if let Some(current_file) = &self.app_state.selected_file {
+                if current_file == entry_path {
                     file_button_text = file_button_text.color(Color32::WHITE);
                 }
+            }
 
             // Show warning if file doesn't exist
             if !entry_path.exists() {
@@ -1777,8 +1796,8 @@ impl SoundpadGui {
             }
 
             // Show tags if any
-            if let Some(metadata) = self.config.sound_metadata.get(entry_path)
-                && !metadata.tags.is_empty() {
+            if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
+                if !metadata.tags.is_empty() {
                     ui.add_space(4.0);
                     let tags_text: Vec<String> = metadata.tags.iter()
                         .take(3)
@@ -1786,6 +1805,7 @@ impl SoundpadGui {
                         .collect();
                     ui.label(RichText::new(tags_text.join(" ")).weak().size(10.0));
                 }
+            }
         });
     }
 

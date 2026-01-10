@@ -177,6 +177,9 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
     // ---------- Send request (end) ----------
 
     // ---------- Read response (start) ----------
+    // Maximum response size to prevent memory exhaustion attacks (10MB, matches daemon)
+    const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+
     let mut len_bytes = [0u8; 4];
     timeout(Duration::from_secs(5), stream.read_exact(&mut len_bytes))
         .await
@@ -184,6 +187,15 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
         .map_err(|_| "Failed to read response length")?;
 
     let response_len = u32::from_le_bytes(len_bytes) as usize;
+
+    // Validate response size before allocating
+    if response_len > MAX_RESPONSE_SIZE {
+        return Err(format!(
+            "Response too large: {} bytes (max {})",
+            response_len, MAX_RESPONSE_SIZE
+        )
+        .into());
+    }
 
     let mut buffer = vec![0u8; response_len];
     timeout(Duration::from_secs(5), stream.read_exact(&mut buffer))

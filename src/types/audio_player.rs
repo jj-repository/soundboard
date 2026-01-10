@@ -115,11 +115,12 @@ impl AudioPlayer {
         let default_gain = daemon_config.default_gain.unwrap_or(1.0);
         let default_mic_gain = daemon_config.default_mic_gain.unwrap_or(1.0);
         let mut default_input_device: Option<AudioDevice> = None;
-        if let Some(name) = daemon_config.default_input_name
-            && let Ok(device) = get_device(&name).await
-            && device.device_type == DeviceType::Input
-        {
-            default_input_device = Some(device);
+        if let Some(name) = daemon_config.default_input_name {
+            if let Ok(device) = get_device(&name).await {
+                if device.device_type == DeviceType::Input {
+                    default_input_device = Some(device);
+                }
+            }
         }
 
         // Try to use configured output device, fall back to default
@@ -188,10 +189,11 @@ impl AudioPlayer {
         let devices = host.output_devices()?;
 
         for device in devices {
-            if let Ok(name) = device.name()
-                && name == device_name {
+            if let Ok(name) = device.name() {
+                if name == device_name {
                     return Ok(OutputStreamBuilder::from_device(device)?.open_stream()?);
                 }
+            }
         }
 
         Err(format!("Output device '{}' not found", device_name).into())
@@ -206,10 +208,11 @@ impl AudioPlayer {
     }
 
     fn abort_link_thread(&mut self) {
-        if let Some(sender) = &self.input_link_sender
-            && sender.send(Terminate {}).is_err() {
+        if let Some(sender) = &self.input_link_sender {
+            if sender.send(Terminate {}).is_err() {
                 eprintln!("Failed to send terminate signal to link thread");
             }
+        }
     }
 
     async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
