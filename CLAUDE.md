@@ -226,6 +226,7 @@ cargo test -- --nocapture  # Show println output
 - Fixed panic-prone `.unwrap()` calls on RwLock in hotkeys module (now uses graceful recovery)
 - Added response size validation on client side to prevent memory exhaustion attacks
 - Added download filename sanitization to prevent directory traversal in updater
+- Fixed daemon lock file being released prematurely (renamed to _lock_file to keep in scope)
 
 ## Common Development Tasks
 
