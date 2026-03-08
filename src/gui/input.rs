@@ -74,7 +74,7 @@ impl SoundpadGui {
         ctx.input(|i| {
             // Close app on escape
             if i.key_pressed(Key::Escape) {
-                std::process::exit(0);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
 
             // Open/close settings

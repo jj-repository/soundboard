@@ -72,12 +72,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::select! {
         _ = commands_loop_handle => {
-            eprint!("Commands loop was finished, stopping program...");
+            eprintln!("Commands loop was finished, stopping program...");
         }
         _ = player_loop_handle => {
-            eprint!("Audio Player loop was finished, stopping program...");
+            eprintln!("Audio Player loop was finished, stopping program...");
         }
     }
+
+    let _ = fs::remove_file(&socket_path);
 
     Ok(())
 }

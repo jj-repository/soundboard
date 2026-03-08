@@ -129,7 +129,10 @@ pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
 }
 
 pub fn is_daemon_running() -> Result<bool, Box<dyn Error>> {
-    let lock_file = fs::File::create(get_runtime_dir().join("daemon.lock"))?;
+    let lock_file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(get_runtime_dir().join("daemon.lock"))?;
     match lock_file.try_lock() {
         Ok(_) => Ok(false),
         Err(_) => Ok(true),

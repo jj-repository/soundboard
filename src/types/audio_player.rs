@@ -342,7 +342,7 @@ impl AudioPlayer {
     }
 
     pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume;
+        self.volume = volume.clamp(0.0, 1.0);
         self.update_sink_volume();
     }
 

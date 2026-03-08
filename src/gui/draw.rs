@@ -1179,9 +1179,10 @@ impl SoundpadGui {
                             let extension = entry_path
                                 .extension()
                                 .and_then(|e| e.to_str())
-                                .unwrap_or_default();
+                                .unwrap_or_default()
+                                .to_lowercase();
 
-                            if !SUPPORTED_EXTENSIONS.contains(&extension) {
+                            if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
                                 continue;
                             }
 
@@ -1868,12 +1869,13 @@ impl SoundpadGui {
     }
 }
 
-/// Truncate a string to a maximum length
+/// Truncate a string to a maximum length (in characters, not bytes)
 fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        let truncated: String = s.chars().take(max_len).collect();
+        format!("{}...", truncated)
     }
 }
 

@@ -42,7 +42,7 @@ impl App for SoundpadGui {
         self.handle_input(ctx);
 
         CentralPanel::default().show(ctx, |ui| {
-            if !is_daemon_running().unwrap() {
+            if !is_daemon_running().unwrap_or(false) {
                 self.draw_waiting_for_daemon(ui);
                 return;
             }

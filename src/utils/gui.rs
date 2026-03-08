@@ -81,7 +81,7 @@ pub fn make_request_sync(request: Request) -> Result<Response, Box<dyn Error>> {
 
 pub fn format_time_pair(position: f32, duration: f32) -> String {
     fn format_time(seconds: f32) -> String {
-        let total_seconds = seconds.round() as u32;
+        let total_seconds = seconds.max(0.0).round() as u32;
         let minutes = total_seconds / 60;
         let secs = total_seconds % 60;
         format!("{:02}:{:02}", minutes, secs)
