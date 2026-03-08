@@ -7,15 +7,18 @@ use pwsp::{
         commands::parse_command,
         daemon::{
             create_runtime_dir, get_audio_player, get_daemon_config, get_runtime_dir,
-            init_audio_player, is_daemon_running, link_player_to_virtual_mic,
+            init_audio_player, is_daemon_running,
         },
-        pipewire::create_virtual_mic,
     },
 };
-use std::{error::Error, fs, os::unix::fs::PermissionsExt, time::Duration};
+#[cfg(target_os = "linux")]
+use pwsp::utils::{
+    daemon::link_player_to_virtual_mic,
+    pipewire::create_virtual_mic,
+};
+use std::{error::Error, fs, time::Duration};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixListener,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::sleep,
 };
 
@@ -28,6 +31,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     get_daemon_config(); // Initialize daemon config
+
+    #[cfg(target_os = "linux")]
     create_virtual_mic()?;
 
     // Initialize audio player with proper error handling
@@ -36,6 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("Cannot start daemon: audio player initialization failed: {}", e).into());
     }
 
+    #[cfg(target_os = "linux")]
     link_player_to_virtual_mic().await?;
 
     let runtime_dir = get_runtime_dir();
@@ -44,23 +50,38 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _lock_file = fs::File::create(runtime_dir.join("daemon.lock"))?;
     _lock_file.lock()?;
 
-    let socket_path = runtime_dir.join("daemon.sock");
-    if fs::metadata(&socket_path).is_ok() {
-        fs::remove_file(&socket_path)?;
-    }
+    // Platform-specific listener setup
+    #[cfg(target_os = "linux")]
+    let listener = {
+        let socket_path = runtime_dir.join("daemon.sock");
+        if fs::metadata(&socket_path).is_ok() {
+            fs::remove_file(&socket_path)?;
+        }
 
-    let listener = UnixListener::bind(&socket_path)?;
+        let listener = tokio::net::UnixListener::bind(&socket_path)?;
 
-    // Security: Set socket permissions to owner-only (0600)
-    // This prevents other users from connecting to the daemon
-    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        // Security: Set socket permissions to owner-only (0600)
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
 
-    println!(
-        "Daemon started. Listening on {}",
-        socket_path.to_str().unwrap_or_default()
-    );
+        println!(
+            "Daemon started. Listening on {}",
+            socket_path.to_str().unwrap_or_default()
+        );
 
-    let commands_loop_handle = tokio::spawn(async {
+        listener
+    };
+
+    #[cfg(target_os = "windows")]
+    let listener = {
+        use pwsp::utils::daemon::DAEMON_TCP_PORT;
+        let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        println!("Daemon started. Listening on {}", addr);
+        listener
+    };
+
+    let commands_loop_handle = tokio::spawn(async move {
         if let Err(e) = commands_loop(listener).await {
             eprintln!("Commands loop error: {}", e);
         }
@@ -79,7 +100,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let _ = fs::remove_file(&socket_path);
+    #[cfg(target_os = "linux")]
+    {
+        let socket_path = get_runtime_dir().join("daemon.sock");
+        let _ = fs::remove_file(&socket_path);
+    }
 
     Ok(())
 }
@@ -87,68 +112,78 @@ async fn main() -> Result<(), Box<dyn Error>> {
 // Maximum IPC message size (10MB) - prevents DoS via memory exhaustion
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
-async fn commands_loop(listener: UnixListener) -> Result<(), Box<dyn Error>> {
+async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
+    // ---------- Read request (start) ----------
+    let mut len_bytes = [0u8; 4];
+    if stream.read_exact(&mut len_bytes).await.is_err() {
+        eprintln!("Failed to read message length from client!");
+        return;
+    }
+
+    let request_len = u32::from_le_bytes(len_bytes) as usize;
+
+    // Security: Prevent DoS via excessive memory allocation
+    if request_len > MAX_IPC_MESSAGE_SIZE {
+        eprintln!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
+        return;
+    }
+
+    let mut buffer = vec![0u8; request_len];
+    if stream.read_exact(&mut buffer).await.is_err() {
+        eprintln!("Failed to read message from client!");
+        return;
+    }
+
+    let request: Request = match serde_json::from_slice(&buffer) {
+        Ok(req) => req,
+        Err(e) => {
+            eprintln!("Failed to parse request JSON: {}", e);
+            return;
+        }
+    };
+    // ---------- Read request (end) ----------
+
+    // ---------- Generate response (start) ----------
+    let command = parse_command(&request);
+    let response: Response = match command {
+        Some(cmd) => cmd.execute().await,
+        None => Response::new(false, "Unknown command"),
+    };
+    // ---------- Generate response (end) ----------
+
+    // ---------- Send response (start) ----------
+    let response_data = match serde_json::to_vec(&response) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Failed to serialize response: {}", e);
+            return;
+        }
+    };
+    let response_len = response_data.len() as u32;
+
+    if stream.write_all(&response_len.to_le_bytes()).await.is_err() {
+        eprintln!("Failed to write response length to client!");
+        return;
+    }
+    if stream.write_all(&response_data).await.is_err() {
+        eprintln!("Failed to write response to client!");
+    }
+    // ---------- Send response (end) ----------
+}
+
+#[cfg(target_os = "linux")]
+async fn commands_loop(listener: tokio::net::UnixListener) -> Result<(), Box<dyn Error>> {
     loop {
-        let (mut stream, _addr) = listener.accept().await?;
+        let (stream, _addr) = listener.accept().await?;
+        tokio::spawn(handle_connection(stream));
+    }
+}
 
-        tokio::spawn(async move {
-            // ---------- Read request (start) ----------
-            let mut len_bytes = [0u8; 4];
-            if stream.read_exact(&mut len_bytes).await.is_err() {
-                eprintln!("Failed to read message length from client!");
-                return;
-            }
-
-            let request_len = u32::from_le_bytes(len_bytes) as usize;
-
-            // Security: Prevent DoS via excessive memory allocation
-            if request_len > MAX_IPC_MESSAGE_SIZE {
-                eprintln!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
-                return;
-            }
-
-            let mut buffer = vec![0u8; request_len];
-            if stream.read_exact(&mut buffer).await.is_err() {
-                eprintln!("Failed to read message from client!");
-                return;
-            }
-
-            let request: Request = match serde_json::from_slice(&buffer) {
-                Ok(req) => req,
-                Err(e) => {
-                    eprintln!("Failed to parse request JSON: {}", e);
-                    return;
-                }
-            };
-            // ---------- Read request (end) ----------
-
-            // ---------- Generate response (start) ----------
-            let command = parse_command(&request);
-            let response: Response = match command {
-                Some(cmd) => cmd.execute().await,
-                None => Response::new(false, "Unknown command"),
-            };
-            // ---------- Generate response (end) ----------
-
-            // ---------- Send response (start) ----------
-            let response_data = match serde_json::to_vec(&response) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Failed to serialize response: {}", e);
-                    return;
-                }
-            };
-            let response_len = response_data.len() as u32;
-
-            if stream.write_all(&response_len.to_le_bytes()).await.is_err() {
-                eprintln!("Failed to write response length to client!");
-                return;
-            }
-            if stream.write_all(&response_data).await.is_err() {
-                eprintln!("Failed to write response to client!");
-            }
-            // ---------- Send response (end) ----------
-        });
+#[cfg(target_os = "windows")]
+async fn commands_loop(listener: tokio::net::TcpListener) -> Result<(), Box<dyn Error>> {
+    loop {
+        let (stream, _addr) = listener.accept().await?;
+        tokio::spawn(handle_connection(stream));
     }
 }
 

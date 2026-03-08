@@ -1,0 +1,106 @@
+name: Release Windows
+
+permissions:
+  contents: write
+  packages: write
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to attach assets to (e.g. v1.0.0)'
+        required: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Determine tag to use
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_TAG="${{ github.event.inputs.tag || '' }}"
+          if [ -n "$INPUT_TAG" ]; then
+            echo "tag=$INPUT_TAG" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          EVENT_TAG="${{ github.event.release.tag_name || '' }}"
+          if [ -n "$EVENT_TAG" ]; then
+            echo "tag=$EVENT_TAG" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [[ "${GITHUB_REF:-}" =~ ^refs/tags/(.+)$ ]]; then
+            echo "tag=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LATEST_JSON=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/latest" || true)
+          TAG_NAME=$(echo "$LATEST_JSON" | jq -r '.tag_name // empty')
+          if [ -n "$TAG_NAME" ]; then
+            echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "tag=" >> $GITHUB_OUTPUT
+
+      - name: Fail if no tag determined
+        if: ${{ steps.tag.outputs.tag == '' }}
+        shell: bash
+        run: |
+          echo "ERROR: No tag determined."
+          exit 1
+
+      - name: Checkout code at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build all release binaries
+        run: cargo build --release
+
+      - name: Package binaries into archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          ARCHIVE_NAME="pwsp-${TAG}-windows-x64.zip"
+
+          BIN_NAMES=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name')
+
+          FILES=()
+          while IFS= read -r BIN; do
+            [ -z "$BIN" ] && continue
+            FILES+=("target/release/${BIN}.exe")
+          done <<< "$BIN_NAMES"
+
+          for f in "${FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "Error: expected binary not found: $f" >&2
+              exit 1
+            fi
+            echo "Will add: $f"
+          done
+
+          7z a "$ARCHIVE_NAME" "${FILES[@]}"
+
+      - name: Upload release archive
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            pwsp-*.zip

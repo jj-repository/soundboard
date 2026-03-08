@@ -1,7 +1,9 @@
 use crate::{
     types::{audio_player::PlayerState, socket::Response},
-    utils::{daemon::get_audio_player, pipewire::get_all_devices},
+    utils::daemon::get_audio_player,
 };
+#[cfg(target_os = "linux")]
+use crate::utils::pipewire::get_all_devices;
 use async_trait::async_trait;
 use std::path::PathBuf;
 
@@ -327,14 +329,21 @@ impl Executable for GetCurrentFilePathCommand {
 #[async_trait]
 impl Executable for GetCurrentInputCommand {
     async fn execute(&self) -> Response {
-        let audio_player = get_audio_player().lock().await;
-        if let Some(input_device) = &audio_player.current_input_device {
-            Response::new(
-                true,
-                format!("{} - {}", input_device.name, input_device.nick),
-            )
-        } else {
-            Response::new(false, "No input device selected")
+        #[cfg(target_os = "linux")]
+        {
+            let audio_player = get_audio_player().lock().await;
+            if let Some(input_device) = &audio_player.current_input_device {
+                Response::new(
+                    true,
+                    format!("{} - {}", input_device.name, input_device.nick),
+                )
+            } else {
+                Response::new(false, "No input device selected")
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Response::new(false, "Input device selection not supported on Windows")
         }
     }
 }
@@ -342,21 +351,28 @@ impl Executable for GetCurrentInputCommand {
 #[async_trait]
 impl Executable for GetAllInputsCommand {
     async fn execute(&self) -> Response {
-        match get_all_devices().await {
-            Ok((input_devices, _output_devices)) => {
-                let mut input_devices_strings = vec![];
-                for device in input_devices {
-                    if device.name == "pwsp-virtual-mic" {
-                        continue;
-                    }
+        #[cfg(target_os = "linux")]
+        {
+            match get_all_devices().await {
+                Ok((input_devices, _output_devices)) => {
+                    let mut input_devices_strings = vec![];
+                    for device in input_devices {
+                        if device.name == "pwsp-virtual-mic" {
+                            continue;
+                        }
 
-                    let string = format!("{} - {}", device.name, device.nick);
-                    input_devices_strings.push(string);
+                        let string = format!("{} - {}", device.name, device.nick);
+                        input_devices_strings.push(string);
+                    }
+                    let response_message = input_devices_strings.join("; ");
+                    Response::new(true, response_message)
                 }
-                let response_message = input_devices_strings.join("; ");
-                Response::new(true, response_message)
+                Err(e) => Response::new(false, format!("Failed to get input devices: {}", e)),
             }
-            Err(e) => Response::new(false, format!("Failed to get input devices: {}", e)),
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Response::new(false, "Input device enumeration not supported on Windows")
         }
     }
 }

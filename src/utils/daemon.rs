@@ -4,16 +4,20 @@ use crate::{
         config::DaemonConfig,
         socket::{Request, Response},
     },
-    utils::pipewire::{create_link, get_all_devices},
 };
+#[cfg(target_os = "linux")]
+use crate::utils::pipewire::{create_link, get_all_devices};
 use std::path::PathBuf;
 use std::{error::Error, fs};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
     sync::{Mutex, OnceCell},
     time::{Duration, sleep},
 };
+
+/// TCP port used for daemon IPC on Windows
+#[cfg(target_os = "windows")]
+pub const DAEMON_TCP_PORT: u16 = 19735;
 
 static AUDIO_PLAYER: OnceCell<Mutex<AudioPlayer>> = OnceCell::const_new();
 
@@ -55,6 +59,7 @@ pub fn get_daemon_config() -> DaemonConfig {
     })
 }
 
+#[cfg(target_os = "linux")]
 pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
     let (input_devices, output_devices) = get_all_devices().await?;
 
@@ -110,20 +115,32 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
 }
 
 pub fn get_runtime_dir() -> PathBuf {
-    dirs::runtime_dir().unwrap_or(PathBuf::from("/run/pwsp"))
+    #[cfg(target_os = "linux")]
+    {
+        dirs::runtime_dir().unwrap_or(PathBuf::from("/run/pwsp"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+            .join("pwsp")
+            .join("run")
+    }
 }
 
 pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
-    use std::os::unix::fs::PermissionsExt;
-
     let runtime_dir = get_runtime_dir();
     if !runtime_dir.exists() {
         fs::create_dir_all(&runtime_dir)?;
     }
 
-    // Security: Ensure runtime directory is owner-only (0700)
-    // This prevents other users from accessing socket and lock files
-    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))?;
+    // Security: Ensure runtime directory is owner-only (0700) on Linux
+    // On Windows, user directories are already ACL-protected
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))?;
+    }
 
     Ok(())
 }
@@ -132,6 +149,7 @@ pub fn is_daemon_running() -> Result<bool, Box<dyn Error>> {
     let lock_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(get_runtime_dir().join("daemon.lock"))?;
     match lock_file.try_lock() {
         Ok(_) => Ok(false),
@@ -154,15 +172,11 @@ pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + Send + Sync>> {
+async fn send_and_receive(
+    mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    request: Request,
+) -> Result<Response, Box<dyn Error + Send + Sync>> {
     use tokio::time::{timeout, Duration};
-
-    let socket_path = get_runtime_dir().join("daemon.sock");
-
-    // Add timeout for connection to prevent GUI freeze
-    let mut stream = timeout(Duration::from_secs(2), UnixStream::connect(socket_path))
-        .await
-        .map_err(|_| "Connection timeout")??;
 
     // ---------- Send request (start) ----------
     let request_data = serde_json::to_vec(&request)?;
@@ -180,7 +194,6 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
     // ---------- Send request (end) ----------
 
     // ---------- Read response (start) ----------
-    // Maximum response size to prevent memory exhaustion attacks (10MB, matches daemon)
     const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
 
     let mut len_bytes = [0u8; 4];
@@ -191,7 +204,6 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
 
     let response_len = u32::from_le_bytes(len_bytes) as usize;
 
-    // Validate response size before allocating
     if response_len > MAX_RESPONSE_SIZE {
         return Err(format!(
             "Response too large: {} bytes (max {})",
@@ -208,4 +220,27 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
     // ---------- Read response (end) ----------
 
     Ok(serde_json::from_slice(&buffer)?)
+}
+
+pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + Send + Sync>> {
+    use tokio::time::timeout;
+
+    #[cfg(target_os = "linux")]
+    {
+        let socket_path = get_runtime_dir().join("daemon.sock");
+        let stream = timeout(Duration::from_secs(2), tokio::net::UnixStream::connect(socket_path))
+            .await
+            .map_err(|_| "Connection timeout")?
+            .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+        send_and_receive(stream, request).await
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
+        let stream = timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr))
+            .await
+            .map_err(|_| "Connection timeout")?
+            .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+        send_and_receive(stream, request).await
+    }
 }

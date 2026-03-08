@@ -1,10 +1,11 @@
+#[cfg(target_os = "linux")]
 use crate::{
     types::pipewire::{AudioDevice, DeviceType, Terminate},
     utils::{
-        daemon::get_daemon_config,
         pipewire::{create_link, get_all_devices, get_device},
     },
 };
+use crate::utils::daemon::get_daemon_config;
 use rodio::{cpal, Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,6 @@ use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
@@ -94,8 +94,11 @@ pub struct AudioPlayer {
     sink: Sink, // Main sink for primary playback
     layers: Vec<AudioLayer>, // Additional layers for mixing
 
+    #[cfg(target_os = "linux")]
     input_link_sender: Option<pipewire::channel::Sender<Terminate>>,
+    #[cfg(target_os = "linux")]
     pub current_input_device: Option<AudioDevice>,
+
     pub current_output_device: Option<String>,
 
     pub volume: f32,
@@ -114,14 +117,19 @@ impl AudioPlayer {
         let default_volume = daemon_config.default_volume.unwrap_or(1.0);
         let default_gain = daemon_config.default_gain.unwrap_or(1.0);
         let default_mic_gain = daemon_config.default_mic_gain.unwrap_or(1.0);
-        let mut default_input_device: Option<AudioDevice> = None;
-        if let Some(name) = daemon_config.default_input_name {
-            if let Ok(device) = get_device(&name).await {
-                if device.device_type == DeviceType::Input {
-                    default_input_device = Some(device);
+
+        #[cfg(target_os = "linux")]
+        let default_input_device = {
+            let mut device: Option<AudioDevice> = None;
+            if let Some(name) = daemon_config.default_input_name {
+                if let Ok(d) = get_device(&name).await {
+                    if d.device_type == DeviceType::Input {
+                        device = Some(d);
+                    }
                 }
             }
-        }
+            device
+        };
 
         // Try to use configured output device, fall back to default
         let (stream_handle, current_output_device) =
@@ -140,10 +148,32 @@ impl AudioPlayer {
                     }
                 }
             } else {
-                (
-                    OutputStreamBuilder::open_default_stream()?,
-                    get_default_output_device(),
-                )
+                // On Windows, try to auto-detect VB-Audio Virtual Cable
+                #[cfg(target_os = "windows")]
+                {
+                    let vb_cable = Self::find_virtual_cable();
+                    if let Some(ref cable_name) = vb_cable {
+                        match Self::create_stream_for_device(cable_name) {
+                            Ok(stream) => (stream, Some(cable_name.clone())),
+                            Err(_) => (
+                                OutputStreamBuilder::open_default_stream()?,
+                                get_default_output_device(),
+                            ),
+                        }
+                    } else {
+                        (
+                            OutputStreamBuilder::open_default_stream()?,
+                            get_default_output_device(),
+                        )
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    (
+                        OutputStreamBuilder::open_default_stream()?,
+                        get_default_output_device(),
+                    )
+                }
             };
 
         let mixer = stream_handle.mixer();
@@ -156,13 +186,17 @@ impl AudioPlayer {
             layers.push(AudioLayer::new(mixer));
         }
 
+        #[cfg(target_os = "linux")]
         let has_input_device = default_input_device.is_some();
+
         let mut audio_player = AudioPlayer {
             _stream_handle: stream_handle,
             sink,
             layers,
 
+            #[cfg(target_os = "linux")]
             input_link_sender: None,
+            #[cfg(target_os = "linux")]
             current_input_device: default_input_device,
             current_output_device,
 
@@ -176,6 +210,7 @@ impl AudioPlayer {
             looped: false,
         };
 
+        #[cfg(target_os = "linux")]
         if has_input_device {
             audio_player.link_devices().await?;
             audio_player.apply_mic_gain();
@@ -199,6 +234,24 @@ impl AudioPlayer {
         Err(format!("Output device '{}' not found", device_name).into())
     }
 
+    /// On Windows, try to find VB-Audio Virtual Cable output device
+    #[cfg(target_os = "windows")]
+    fn find_virtual_cable() -> Option<String> {
+        let host = cpal::default_host();
+        if let Ok(devices) = host.output_devices() {
+            for device in devices {
+                if let Ok(name) = device.name() {
+                    let lower = name.to_lowercase();
+                    if lower.contains("cable input") || lower.contains("vb-audio") {
+                        println!("Auto-detected VB-Audio Virtual Cable: {}", name);
+                        return Some(name);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_current_output_device(&self) -> Option<&String> {
         self.current_output_device.as_ref()
     }
@@ -207,6 +260,7 @@ impl AudioPlayer {
         get_output_devices()
     }
 
+    #[cfg(target_os = "linux")]
     fn abort_link_thread(&mut self) {
         if let Some(sender) = &self.input_link_sender {
             if sender.send(Terminate {}).is_err() {
@@ -215,6 +269,7 @@ impl AudioPlayer {
         }
     }
 
+    #[cfg(target_os = "linux")]
     async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
         self.abort_link_thread();
 
@@ -305,6 +360,12 @@ impl AudioPlayer {
         Ok(())
     }
 
+    // On Windows, link_devices is a no-op (routing is via output device selection)
+    #[cfg(target_os = "windows")]
+    async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+
     pub fn pause(&mut self) {
         if self.get_state() == PlayerState::Playing {
             self.sink.pause();
@@ -355,6 +416,7 @@ impl AudioPlayer {
         self.gain
     }
 
+    #[cfg(target_os = "linux")]
     fn apply_mic_gain(&self) {
         if let Some(device) = &self.current_input_device {
             // Use wpctl to set the source volume
@@ -363,7 +425,7 @@ impl AudioPlayer {
             let id_str = device.id.to_string();
             let gain_str = format!("{:.2}", self.mic_gain);
 
-            match Command::new("wpctl")
+            match std::process::Command::new("wpctl")
                 .args(["set-volume", &id_str, &gain_str])
                 .output()
             {
@@ -381,6 +443,10 @@ impl AudioPlayer {
             }
         }
     }
+
+    // On Windows, mic gain is not adjustable from the app — users adjust in Windows Sound Settings
+    #[cfg(target_os = "windows")]
+    fn apply_mic_gain(&self) {}
 
     pub fn set_mic_gain(&mut self, mic_gain: f32) {
         self.mic_gain = mic_gain.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
@@ -482,6 +548,7 @@ impl AudioPlayer {
 
                 // Stop current playback and abort virtual mic link
                 self.sink.stop();
+                #[cfg(target_os = "linux")]
                 self.abort_link_thread();
 
                 self.sink.append(source);
@@ -506,6 +573,7 @@ impl AudioPlayer {
         &self.current_file_path
     }
 
+    #[cfg(target_os = "linux")]
     pub async fn set_current_input_device(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         let input_device = get_device(name).await?;
 
@@ -518,6 +586,11 @@ impl AudioPlayer {
         self.link_devices().await?;
 
         Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    pub async fn set_current_input_device(&mut self, _name: &str) -> Result<(), Box<dyn Error>> {
+        Err("Input device selection is not available on Windows. Audio is routed via output device selection.".into())
     }
 
     // ============= Layer Management Methods =============

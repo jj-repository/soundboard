@@ -65,13 +65,20 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sy
         _ => false,
     };
 
-    // Find the appropriate asset for Linux
+    // Find the appropriate asset for the current platform
     let download_url = release
         .assets
         .iter()
         .find(|a| {
             let name = a.name.to_lowercase();
-            name.contains("linux") || name.ends_with(".tar.gz") || name.ends_with(".deb")
+            #[cfg(target_os = "linux")]
+            {
+                name.contains("linux") || name.ends_with(".tar.gz") || name.ends_with(".deb")
+            }
+            #[cfg(target_os = "windows")]
+            {
+                name.contains("windows") || name.ends_with(".exe") || name.ends_with(".zip") || name.ends_with(".msi")
+            }
         })
         .map(|a| a.browser_download_url.clone());
 
@@ -117,7 +124,7 @@ pub async fn download_update(
     let filename = if filename.is_empty() {
         "pwsp-update"
     } else {
-        &filename
+        filename
     };
 
     // Create temp directory for download

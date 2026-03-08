@@ -1,4 +1,5 @@
 use crate::{
+    MutexExt,
     types::{
         audio_player::{LayerInfo, PlayerState},
         config::GuiConfig,
@@ -11,23 +12,9 @@ use std::{
     collections::HashMap,
     error::Error,
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 use tokio::time::{Duration, sleep};
-
-/// Extension trait for Mutex that handles poisoning gracefully
-trait MutexExt<T> {
-    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
-}
-
-impl<T> MutexExt<T> for Mutex<T> {
-    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|poisoned| {
-            eprintln!("Warning: Mutex was poisoned, recovering...");
-            poisoned.into_inner()
-        })
-    }
-}
 
 pub fn get_gui_config() -> GuiConfig {
     GuiConfig::load_from_file().unwrap_or_else(|_| {

@@ -133,8 +133,10 @@ impl SoundpadGui {
                 ui.checkbox(&mut self.config.save_volume, "Always remember volume");
             let save_gain_response =
                 ui.checkbox(&mut self.config.save_gain, "Always remember gain boost");
+            #[cfg(target_os = "linux")]
             let save_mic_gain_response =
                 ui.checkbox(&mut self.config.save_mic_gain, "Always remember mic gain");
+            #[cfg(target_os = "linux")]
             let save_input_response =
                 ui.checkbox(&mut self.config.save_input, "Always remember microphone");
             let save_scale_response = ui.checkbox(
@@ -146,13 +148,19 @@ impl SoundpadGui {
                 "Pause audio playback when the window is closed",
             );
 
-            if save_volume_response.changed()
+            let mut settings_changed = save_volume_response.changed()
                 || save_gain_response.changed()
-                || save_mic_gain_response.changed()
-                || save_input_response.changed()
                 || save_scale_response.changed()
-                || pause_on_exit_response.changed()
+                || pause_on_exit_response.changed();
+
+            #[cfg(target_os = "linux")]
             {
+                settings_changed = settings_changed
+                    || save_mic_gain_response.changed()
+                    || save_input_response.changed();
+            }
+
+            if settings_changed {
                 self.config.save_to_file().ok();
             }
             // --------------------------------
@@ -1813,47 +1821,49 @@ impl SoundpadGui {
     fn draw_footer(&mut self, ui: &mut Ui) {
         ui.add_space(5.0);
         ui.horizontal_top(|ui| {
-            // ---------- Microphone selection ----------
-            let mut mics: Vec<(&String, &String)> =
-                self.audio_player_state.all_inputs.iter().collect();
-            mics.sort_by_key(|(k, _)| *k);
+            // ---------- Microphone selection (Linux only - PipeWire) ----------
+            #[cfg(target_os = "linux")]
+            {
+                let mut mics: Vec<(&String, &String)> =
+                    self.audio_player_state.all_inputs.iter().collect();
+                mics.sort_by_key(|(k, _)| *k);
 
-            let mut selected_input = self.audio_player_state.current_input.to_owned();
-            let prev_input = selected_input.to_owned();
-            ComboBox::from_label("Select your mic")
-                .selected_text(
-                    self.audio_player_state
-                        .all_inputs
-                        .get(&selected_input)
-                        .unwrap_or(&String::new()),
-                )
-                .show_ui(ui, |ui| {
-                    for (name, nick) in mics {
-                        ui.selectable_value(&mut selected_input, name.to_owned(), nick);
-                    }
-                });
+                let mut selected_input = self.audio_player_state.current_input.to_owned();
+                let prev_input = selected_input.to_owned();
+                ComboBox::from_label("Select your mic")
+                    .selected_text(
+                        self.audio_player_state
+                            .all_inputs
+                            .get(&selected_input)
+                            .unwrap_or(&String::new()),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (name, nick) in mics {
+                            ui.selectable_value(&mut selected_input, name.to_owned(), nick);
+                        }
+                    });
 
-            if selected_input != prev_input {
-                self.set_input(selected_input);
+                if selected_input != prev_input {
+                    self.set_input(selected_input);
+                }
+
+                ui.add_space(10.0);
+
+                // ---------- Mic Gain ----------
+                ui.label(RichText::new("Mic Gain:").monospace().size(12.0));
+                let mic_gain_slider = Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
+                    .show_value(false)
+                    .step_by(0.1);
+                let mic_gain_slider_response = ui.add_sized([60.0, 18.0], mic_gain_slider);
+                if mic_gain_slider_response.drag_stopped() {
+                    self.app_state.mic_gain_dragged = true;
+                }
+                ui.label(
+                    RichText::new(format!("{:.1}x", self.audio_player_state.mic_gain))
+                        .monospace()
+                        .size(12.0),
+                );
             }
-            // --------------------------------
-
-            ui.add_space(10.0);
-
-            // ---------- Mic Gain ----------
-            ui.label(RichText::new("Mic Gain:").monospace().size(12.0));
-            let mic_gain_slider = Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
-                .show_value(false)
-                .step_by(0.1);
-            let mic_gain_slider_response = ui.add_sized([60.0, 18.0], mic_gain_slider);
-            if mic_gain_slider_response.drag_stopped() {
-                self.app_state.mic_gain_dragged = true;
-            }
-            ui.label(
-                RichText::new(format!("{:.1}x", self.audio_player_state.mic_gain))
-                    .monospace()
-                    .size(12.0),
-            );
             // --------------------------------
 
             ui.add_space(ui.available_width() - 18.0 - ui.spacing().item_spacing.x);

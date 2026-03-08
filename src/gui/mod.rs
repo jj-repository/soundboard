@@ -9,6 +9,7 @@ use crate::gui::tray::{TrayHandle, TrayMessage, start_tray};
 use eframe::{HardwareAcceleration, NativeOptions, icon_data::from_png_bytes, run_native};
 use egui::{Context, Vec2, ViewportBuilder};
 use pwsp::{
+    MutexExt,
     types::{
         audio_player::PlayerState,
         config::GuiConfig,
@@ -26,25 +27,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
 use std::{
     error::Error,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
     thread,
 };
-
-/// Extension trait for Mutex that handles poisoning gracefully
-trait MutexExt<T> {
-    /// Lock the mutex, recovering from poison if necessary.
-    /// This is preferred over `.lock().unwrap()` as it won't panic on poisoned locks.
-    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
-}
-
-impl<T> MutexExt<T> for Mutex<T> {
-    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|poisoned| {
-            eprintln!("Warning: Mutex was poisoned, recovering...");
-            poisoned.into_inner()
-        })
-    }
-}
 
 const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "mp3", "wav", "ogg", "flac", "mp4", "m4a", "aac", "mov", "mkv", "webm", "avi", "opus", "wma",
@@ -943,11 +928,17 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         centered: true,
         hardware_acceleration: HardwareAcceleration::Preferred,
 
-        viewport: ViewportBuilder::default()
-            .with_app_id("ru.arabianq.pwsp")
-            .with_inner_size(Vec2::new(1200.0, 800.0))
-            .with_min_inner_size(Vec2::new(800.0, 600.0))
-            .with_icon(from_png_bytes(ICON)?),
+        viewport: {
+            let builder = ViewportBuilder::default()
+                .with_inner_size(Vec2::new(1200.0, 800.0))
+                .with_min_inner_size(Vec2::new(800.0, 600.0))
+                .with_icon(from_png_bytes(ICON)?);
+
+            #[cfg(target_os = "linux")]
+            let builder = builder.with_app_id("ru.arabianq.pwsp");
+
+            builder
+        },
 
         ..Default::default()
     };
