@@ -81,7 +81,8 @@ jobs:
           ARCHIVE_NAME="pwsp-${TAG}-windows-x64.zip"
 
           BIN_NAMES=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name')
+            | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name' \
+            | tr -d '\r')
 
           FILES=()
           while IFS= read -r BIN; do
