@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**PWSP (PipeWire SoundPad)** is a Rust application for playing audio files through your microphone on Linux. It uses PipeWire for audio routing and features both CLI and GUI clients with a daemon architecture.
+**PWSP (PipeWire SoundPad)** is a cross-platform Rust application for playing audio files through your microphone. It uses PipeWire for audio routing on Linux and VB-Audio Virtual Cable on Windows, and features both CLI and GUI clients with a daemon architecture.
 
-**Version:** 1.5.0
+**Version:** 1.6.1
 
 ## Files Structure
 
@@ -63,7 +63,7 @@ cargo check
 
 ```
 pwsp-daemon (background service)
-    ↕ Unix Socket IPC
+    ↕ Unix Socket IPC (Linux) / TCP localhost:19735 (Windows)
 pwsp-gui (desktop client)
 pwsp-cli (terminal client)
 ```
@@ -71,12 +71,12 @@ pwsp-cli (terminal client)
 ### Daemon
 - Manages PipeWire audio routing
 - Handles audio playback with rodio
-- Listens on Unix socket for commands
-- Can run as systemd user service
+- Listens on Unix socket (Linux) or TCP localhost:19735 (Windows) for commands
+- Can run as systemd user service (Linux)
 
 ### GUI Client
 - egui/eframe-based desktop application
-- Connects to daemon via Unix socket
+- Connects to daemon via Unix socket (Linux) or TCP (Windows)
 - Soundboard with configurable hotkeys
 - Settings panel with update management
 
@@ -119,7 +119,7 @@ pub enum UpdateStatus {
 
 **Features:**
 - Version check via GitHub API
-- Linux binary detection (.tar.gz, .deb)
+- Platform-specific binary detection (.tar.gz, .deb for Linux; .zip, .msi for Windows)
 - Progress callback for downloads
 - Temp directory storage
 - Uses semver crate for version comparison
@@ -145,7 +145,9 @@ pipewire = "0.9.2"        # PipeWire bindings
 reqwest = "0.12"          # HTTP client
 semver = "1.0"            # Version comparison
 global-hotkey = "0.6"     # Global keyboard shortcuts
-ksni = "0.3"              # System tray
+ksni = "0.3"              # System tray (Linux)
+tray-icon = "..."         # System tray (Windows)
+muda = "..."              # Menu bar (Windows)
 ```
 
 ## Security Features
@@ -249,9 +251,16 @@ cargo test -- --nocapture  # Show println output
 
 ## Platform Notes
 
-- **Linux only**: Uses PipeWire (Linux audio system)
-- **Systemd integration**: Service file in `assets/`
-- **System tray**: Uses ksni for Linux tray icon
+### Linux
+- Uses PipeWire for audio routing
+- Systemd integration: Service file in `assets/`
+- System tray via ksni
+- IPC via Unix socket
+
+### Windows
+- Uses VB-Audio Virtual Cable for audio routing
+- System tray via tray-icon + muda
+- IPC via TCP localhost:19735
 
 ---
 
@@ -283,7 +292,7 @@ cargo test -- --nocapture  # Show println output
 
 ## Quality Standards
 
-**Target:** Linux soundboard - reliable audio playback, responsive UI
+**Target:** Cross-platform soundboard - reliable audio playback, responsive UI
 
 | Aspect | Standard | Status |
 |--------|----------|--------|
@@ -298,9 +307,9 @@ cargo test -- --nocapture  # Show println output
 | Decision | Rationale |
 |----------|-----------|
 | Daemon architecture | Audio routing needs persistent process; GUI can restart |
-| Unix socket IPC | Simple, fast, secure for local communication |
+| Unix socket IPC (Linux) / TCP (Windows) | Simple, fast, secure for local communication |
 | egui for GUI | Pure Rust, easy to build, good enough UI |
-| Linux only | PipeWire is Linux-specific; no cross-platform need |
+| Cross-platform (Linux + Windows) | PipeWire on Linux, VB-Audio Virtual Cable on Windows |
 | Manual update check | Auto-update for binaries is complex; user can check manually |
 
 ## Won't Fix (Accepted Limitations)
@@ -310,7 +319,7 @@ cargo test -- --nocapture  # Show println output
 | No auto_check_updates | Adds complexity; manual check is fine |
 | No startup update check | Same as above |
 | Binary updates need manual install | Safe approach; avoids self-modification complexity |
-| No Windows/Mac support | PipeWire is Linux; different tool needed for other platforms |
+| No macOS support | No virtual audio cable solution implemented for macOS |
 
 ## Completed Optimizations
 
