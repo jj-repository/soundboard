@@ -82,7 +82,7 @@ jobs:
           toolchain: stable
 
       - name: Build all release binaries
-        run: cargo build --release --locked
+        run: cargo build --release
 
       - name: Install cargo-deb and create .deb
         shell: bash
