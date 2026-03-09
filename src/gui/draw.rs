@@ -148,17 +148,19 @@ impl SoundpadGui {
                 "Pause audio playback when the window is closed",
             );
 
-            let mut settings_changed = save_volume_response.changed()
+            #[cfg(target_os = "linux")]
+            let settings_changed = save_volume_response.changed()
+                || save_gain_response.changed()
+                || save_scale_response.changed()
+                || pause_on_exit_response.changed()
+                || save_mic_gain_response.changed()
+                || save_input_response.changed();
+
+            #[cfg(not(target_os = "linux"))]
+            let settings_changed = save_volume_response.changed()
                 || save_gain_response.changed()
                 || save_scale_response.changed()
                 || pause_on_exit_response.changed();
-
-            #[cfg(target_os = "linux")]
-            {
-                settings_changed = settings_changed
-                    || save_mic_gain_response.changed()
-                    || save_input_response.changed();
-            }
 
             if settings_changed {
                 self.config.save_to_file().ok();

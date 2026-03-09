@@ -40,7 +40,7 @@ ksni = { version = "0.3", features = ["blocking"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tray-icon = "0.19"
-muda = "0.17"
+muda = "0.15"
 
 [[bin]]
 name = "pwsp-daemon"

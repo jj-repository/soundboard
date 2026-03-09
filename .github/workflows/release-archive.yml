@@ -29,6 +29,8 @@ jobs:
 
       - name: Determine tag to use
         id: tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
