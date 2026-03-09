@@ -97,7 +97,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Build all release binaries
-        run: cargo build --release --locked
+        run: cargo build --release
 
       - name: Package all binaries into one archive
         shell: bash
