@@ -133,10 +133,8 @@ impl SoundpadGui {
                 ui.checkbox(&mut self.config.save_volume, "Always remember volume");
             let save_gain_response =
                 ui.checkbox(&mut self.config.save_gain, "Always remember gain boost");
-            #[cfg(target_os = "linux")]
             let save_mic_gain_response =
                 ui.checkbox(&mut self.config.save_mic_gain, "Always remember mic gain");
-            #[cfg(target_os = "linux")]
             let save_input_response =
                 ui.checkbox(&mut self.config.save_input, "Always remember microphone");
             let save_scale_response = ui.checkbox(
@@ -148,19 +146,12 @@ impl SoundpadGui {
                 "Pause audio playback when the window is closed",
             );
 
-            #[cfg(target_os = "linux")]
             let settings_changed = save_volume_response.changed()
                 || save_gain_response.changed()
                 || save_scale_response.changed()
                 || pause_on_exit_response.changed()
                 || save_mic_gain_response.changed()
                 || save_input_response.changed();
-
-            #[cfg(not(target_os = "linux"))]
-            let settings_changed = save_volume_response.changed()
-                || save_gain_response.changed()
-                || save_scale_response.changed()
-                || pause_on_exit_response.changed();
 
             if settings_changed {
                 self.config.save_to_file().ok();
@@ -1823,8 +1814,7 @@ impl SoundpadGui {
     fn draw_footer(&mut self, ui: &mut Ui) {
         ui.add_space(5.0);
         ui.horizontal_top(|ui| {
-            // ---------- Microphone selection (Linux only - PipeWire) ----------
-            #[cfg(target_os = "linux")]
+            // ---------- Microphone selection ----------
             {
                 let mut mics: Vec<(&String, &String)> =
                     self.audio_player_state.all_inputs.iter().collect();

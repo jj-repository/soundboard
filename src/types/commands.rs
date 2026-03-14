@@ -343,7 +343,12 @@ impl Executable for GetCurrentInputCommand {
         }
         #[cfg(target_os = "windows")]
         {
-            Response::new(false, "Input device selection not supported on Windows")
+            let audio_player = get_audio_player().lock().await;
+            if let Some(ref device_name) = audio_player.current_input_device {
+                Response::new(true, format!("{} - {}", device_name, device_name))
+            } else {
+                Response::new(false, "No input device selected")
+            }
         }
     }
 }
@@ -372,7 +377,13 @@ impl Executable for GetAllInputsCommand {
         }
         #[cfg(target_os = "windows")]
         {
-            Response::new(false, "Input device enumeration not supported on Windows")
+            let devices = crate::types::audio_player::get_input_devices();
+            let mut device_strings: Vec<String> = devices.keys()
+                .map(|name| format!("{} - {}", name, name))
+                .collect();
+            device_strings.sort();
+            let response_message = device_strings.join("; ");
+            Response::new(true, response_message)
         }
     }
 }

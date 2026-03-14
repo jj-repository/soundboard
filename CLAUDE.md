@@ -259,6 +259,9 @@ cargo test -- --nocapture  # Show println output
 
 ### Windows
 - Uses VB-Audio Virtual Cable for audio routing
+- Mic passthrough: captures from real mic via CPAL, mixes with soundboard audio through output device
+- Mic gain adjustable via mic passthrough sink volume
+- Input device enumeration and selection via CPAL
 - System tray via tray-icon + muda
 - IPC via TCP localhost:19735
 
@@ -328,5 +331,8 @@ cargo test -- --nocapture  # Show println output
 - ✅ Filename sanitization in updater
 - ✅ Proper async patterns
 - ✅ IPC security hardening
+- ✅ Windows mic passthrough (CPAL input capture → mixer → VB-Audio output)
+- ✅ Windows mic gain control via passthrough sink volume
+- ✅ Windows input device enumeration and selection
 
 **DO NOT further optimize:** Audio latency is determined by PipeWire/rodio. GUI is already responsive with egui's immediate mode.

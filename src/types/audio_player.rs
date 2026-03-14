@@ -8,6 +8,8 @@ use crate::{
 use crate::utils::daemon::get_daemon_config;
 use rodio::{cpal, Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
+#[cfg(target_os = "windows")]
+use rodio::cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -16,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+#[cfg(target_os = "windows")]
+use std::{collections::VecDeque, sync::Arc};
 
 #[derive(Debug, Eq, PartialEq, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum PlayerState {
@@ -45,6 +49,21 @@ pub fn get_output_devices() -> HashMap<String, String> {
 pub fn get_default_output_device() -> Option<String> {
     let host = cpal::default_host();
     host.default_output_device().and_then(|d| d.name().ok())
+}
+
+/// Get all available input devices (for mic selection on Windows)
+#[cfg(target_os = "windows")]
+pub fn get_input_devices() -> HashMap<String, String> {
+    let mut devices = HashMap::new();
+    let host = cpal::default_host();
+    if let Ok(input_devices) = host.input_devices() {
+        for device in input_devices {
+            if let Ok(name) = device.name() {
+                devices.insert(name.clone(), name);
+            }
+        }
+    }
+    devices
 }
 
 /// Represents a single audio layer that can play sounds independently
@@ -89,6 +108,40 @@ pub const MAX_MIC_GAIN: f32 = 3.0;
 /// Minimum mic gain multiplier (0.5x = -6dB, prevents complete silence)
 pub const MIN_MIC_GAIN: f32 = 0.5;
 
+/// Shared ring buffer for mic audio samples (Windows mic passthrough)
+#[cfg(target_os = "windows")]
+struct MicBuffer {
+    samples: std::sync::Mutex<VecDeque<f32>>,
+    sample_rate: u32,
+    channels: u16,
+}
+
+/// Custom rodio Source that reads captured mic audio from a shared buffer
+#[cfg(target_os = "windows")]
+struct MicSource {
+    buffer: Arc<MicBuffer>,
+}
+
+#[cfg(target_os = "windows")]
+impl Iterator for MicSource {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> {
+        if let Ok(mut buf) = self.buffer.samples.lock() {
+            Some(buf.pop_front().unwrap_or(0.0))
+        } else {
+            Some(0.0) // Return silence on lock failure
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Source for MicSource {
+    fn current_span_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { self.buffer.channels }
+    fn sample_rate(&self) -> u32 { self.buffer.sample_rate }
+    fn total_duration(&self) -> Option<Duration> { None }
+}
+
 pub struct AudioPlayer {
     _stream_handle: OutputStream,
     sink: Sink, // Main sink for primary playback
@@ -98,6 +151,13 @@ pub struct AudioPlayer {
     input_link_sender: Option<pipewire::channel::Sender<Terminate>>,
     #[cfg(target_os = "linux")]
     pub current_input_device: Option<AudioDevice>,
+
+    #[cfg(target_os = "windows")]
+    pub current_input_device: Option<String>,
+    #[cfg(target_os = "windows")]
+    mic_stop_sender: Option<std::sync::mpsc::Sender<()>>,
+    #[cfg(target_os = "windows")]
+    mic_sink: Sink,
 
     pub current_output_device: Option<String>,
 
@@ -130,6 +190,9 @@ impl AudioPlayer {
             }
             device
         };
+
+        #[cfg(target_os = "windows")]
+        let default_input_name = daemon_config.default_input_name;
 
         // Try to use configured output device, fall back to default
         let (stream_handle, current_output_device) =
@@ -186,6 +249,14 @@ impl AudioPlayer {
             layers.push(AudioLayer::new(mixer));
         }
 
+        // Windows: create dedicated sink for mic passthrough audio
+        #[cfg(target_os = "windows")]
+        let mic_sink = {
+            let s = Sink::connect_new(mixer);
+            s.stop();
+            s
+        };
+
         #[cfg(target_os = "linux")]
         let has_input_device = default_input_device.is_some();
 
@@ -198,6 +269,14 @@ impl AudioPlayer {
             input_link_sender: None,
             #[cfg(target_os = "linux")]
             current_input_device: default_input_device,
+
+            #[cfg(target_os = "windows")]
+            current_input_device: default_input_name,
+            #[cfg(target_os = "windows")]
+            mic_stop_sender: None,
+            #[cfg(target_os = "windows")]
+            mic_sink,
+
             current_output_device,
 
             volume: default_volume,
@@ -213,6 +292,14 @@ impl AudioPlayer {
         #[cfg(target_os = "linux")]
         if has_input_device {
             audio_player.link_devices().await?;
+            audio_player.apply_mic_gain();
+        }
+
+        #[cfg(target_os = "windows")]
+        if audio_player.current_input_device.is_some() {
+            if let Err(e) = audio_player.start_mic_passthrough() {
+                eprintln!("Failed to start mic passthrough: {}", e);
+            }
             audio_player.apply_mic_gain();
         }
 
@@ -444,9 +531,11 @@ impl AudioPlayer {
         }
     }
 
-    // On Windows, mic gain is not adjustable from the app — users adjust in Windows Sound Settings
+    // On Windows, apply mic gain by adjusting the mic passthrough sink volume
     #[cfg(target_os = "windows")]
-    fn apply_mic_gain(&self) {}
+    fn apply_mic_gain(&self) {
+        self.mic_sink.set_volume(self.mic_gain);
+    }
 
     pub fn set_mic_gain(&mut self, mic_gain: f32) {
         self.mic_gain = mic_gain.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
@@ -589,8 +678,128 @@ impl AudioPlayer {
     }
 
     #[cfg(target_os = "windows")]
-    pub async fn set_current_input_device(&mut self, _name: &str) -> Result<(), Box<dyn Error>> {
-        Err("Input device selection is not available on Windows. Audio is routed via output device selection.".into())
+    pub async fn set_current_input_device(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
+        self.current_input_device = Some(name.to_string());
+        self.start_mic_passthrough()?;
+        self.apply_mic_gain();
+        Ok(())
+    }
+
+    /// Stop the current mic capture thread and clear the mic sink
+    #[cfg(target_os = "windows")]
+    fn stop_mic_passthrough(&mut self) {
+        if let Some(sender) = self.mic_stop_sender.take() {
+            sender.send(()).ok();
+        }
+        self.mic_sink.stop();
+    }
+
+    /// Start capturing from the selected mic and routing audio through the output mixer
+    #[cfg(target_os = "windows")]
+    fn start_mic_passthrough(&mut self) -> Result<(), Box<dyn Error>> {
+        self.stop_mic_passthrough();
+
+        let device_name = match &self.current_input_device {
+            Some(name) => name.clone(),
+            None => return Ok(()),
+        };
+
+        // Find the CPAL input device
+        let host = cpal::default_host();
+        let device = host.input_devices()?
+            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+            .ok_or_else(|| format!("Input device '{}' not found", device_name))?;
+
+        let supported_config = device.default_input_config()?;
+        let sample_rate = supported_config.sample_rate().0;
+        let channels = supported_config.channels();
+        let sample_format = supported_config.sample_format();
+        let stream_config: cpal::StreamConfig = supported_config.into();
+
+        let buffer = Arc::new(MicBuffer {
+            samples: std::sync::Mutex::new(VecDeque::with_capacity(sample_rate as usize)),
+            sample_rate,
+            channels,
+        });
+
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let buffer_clone = buffer.clone();
+        // Cap buffer at ~500ms to prevent latency buildup
+        let max_samples = (sample_rate as usize * channels as usize) / 2;
+
+        // Spawn capture thread (cpal::Stream may not be Send on all platforms)
+        std::thread::spawn(move || {
+            let push_f32 = {
+                let buf = buffer_clone.clone();
+                move |data: &[f32]| {
+                    if let Ok(mut b) = buf.samples.lock() {
+                        while b.len() > max_samples {
+                            b.pop_front();
+                        }
+                        b.extend(data);
+                    }
+                }
+            };
+
+            let stream_result = match sample_format {
+                cpal::SampleFormat::F32 => {
+                    let push = push_f32;
+                    device.build_input_stream(
+                        &stream_config,
+                        move |data: &[f32], _: &cpal::InputCallbackInfo| { push(data); },
+                        |err| eprintln!("Mic input error: {}", err),
+                        None,
+                    )
+                }
+                cpal::SampleFormat::I16 => {
+                    device.build_input_stream(
+                        &stream_config,
+                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            let f32_data: Vec<f32> = data.iter()
+                                .map(|&s| s as f32 / 32768.0)
+                                .collect();
+                            if let Ok(mut b) = buffer_clone.samples.lock() {
+                                while b.len() > max_samples {
+                                    b.pop_front();
+                                }
+                                b.extend(f32_data);
+                            }
+                        },
+                        |err| eprintln!("Mic input error: {}", err),
+                        None,
+                    )
+                }
+                format => {
+                    eprintln!("Unsupported mic sample format: {:?}", format);
+                    return;
+                }
+            };
+
+            match stream_result {
+                Ok(stream) => {
+                    if let Err(e) = stream.play() {
+                        eprintln!("Failed to start mic stream: {}", e);
+                        return;
+                    }
+                    // Keep stream alive until stop signal
+                    let _ = stop_rx.recv();
+                    drop(stream);
+                }
+                Err(e) => {
+                    eprintln!("Failed to build mic input stream: {}", e);
+                }
+            }
+        });
+
+        // Connect MicSource to the mic sink on the output mixer
+        let mic_source = MicSource { buffer };
+        self.mic_sink.stop();
+        self.mic_sink.append(mic_source);
+        self.mic_sink.play();
+
+        self.mic_stop_sender = Some(stop_tx);
+        println!("Mic passthrough started: {}", device_name);
+        Ok(())
     }
 
     // ============= Layer Management Methods =============
