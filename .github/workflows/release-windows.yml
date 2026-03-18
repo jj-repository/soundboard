@@ -60,7 +60,7 @@ jobs:
           exit 1
 
       - name: Checkout code at tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.tag.outputs.tag || github.ref }}
           fetch-depth: 0
