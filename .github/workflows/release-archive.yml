@@ -104,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          ARCHIVE_NAME="pwsp-${TAG}-linux-x64.zip"
+          ARCHIVE_NAME="PWSP-Linux.zip"
           echo "Creating archive: $ARCHIVE_NAME"
 
           # читаем построчно список бинарников и формируем массив файлов
@@ -137,4 +137,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
-            pwsp-*.zip
+            PWSP-Linux.zip
