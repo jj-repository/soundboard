@@ -1,6 +1,6 @@
 # Overview
 
-v1.7.0 — Cross-platform Rust soundboard that routes audio through the microphone. Daemon architecture with GUI and CLI clients.
+v1.7.1 — Cross-platform Rust soundboard that routes audio through the microphone. Daemon architecture with GUI and CLI clients.
 
 ## Files
 - `src/main.rs` — GUI entry point
