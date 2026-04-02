@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          ARCHIVE_NAME="PWSP-Windows.zip"
+          ARCHIVE_NAME="PWSP.zip"
 
           BIN_NAMES=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name' \
@@ -104,4 +104,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
-            PWSP-Windows.zip
+            PWSP.zip
