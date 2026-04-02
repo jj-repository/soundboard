@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 const GITHUB_REPO: &str = "jj-repository/soundboard";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Display version in X.YY format (e.g. "1.08")
+const DISPLAY_VERSION: &str = "1.08";
 
 #[derive(Debug, Deserialize)]
 pub struct GitHubRelease {
@@ -143,5 +145,5 @@ pub async fn download_update(
 }
 
 pub fn get_current_version() -> &'static str {
-    CURRENT_VERSION
+    DISPLAY_VERSION
 }
