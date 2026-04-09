@@ -13,6 +13,10 @@ on:
         description: 'Tag to attach assets to (e.g. v1.0.0)'
         required: false
 
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: windows-latest
@@ -59,6 +63,15 @@ jobs:
           echo "ERROR: No tag determined."
           exit 1
 
+      - name: Validate tag format
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Tag '$TAG' does not match semver format (vX.Y.Z)"
+            exit 1
+          fi
+
       - name: Checkout code at tag
         uses: actions/checkout@v6
         with:
@@ -76,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          ARCHIVE_NAME="PWSP.zip"
+          ARCHIVE_NAME="PWSP-Windows.zip"
 
           BIN_NAMES=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name' \
@@ -98,10 +111,16 @@ jobs:
 
           7z a "$ARCHIVE_NAME" "${FILES[@]}"
 
-      - name: Upload release archive
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: |
-            PWSP.zip
+      - name: Generate checksum
+        shell: bash
+        run: sha256sum PWSP-Windows.zip > PWSP-Windows.zip.sha256
+
+      - name: Create Release
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            PWSP-Windows.zip \
+            PWSP-Windows.zip.sha256 \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

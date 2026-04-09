@@ -13,6 +13,10 @@ on:
         description: 'Tag to attach assets to (e.g. v1.0.0)'
         required: false
 
+concurrency:
+  group: release-linux
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -76,6 +80,14 @@ jobs:
           echo "ERROR: No tag determined. Provide a tag when running manually or ensure a release exists."
           exit 1
 
+      - name: Validate tag format
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Tag '$TAG' does not match semver format (vX.Y.Z)"
+            exit 1
+          fi
+
       - name: Checkout code at tag
         uses: actions/checkout@v6
         with:
@@ -84,6 +96,11 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
 
       - name: Extract all binary names
         id: cargo-meta
@@ -131,10 +148,15 @@ jobs:
           # создаём архив с бинарниками внутри как просто pwsp-gui, pwsp-daemon, pwsp-cli
           zip -j "$ARCHIVE_NAME" "${FILES[@]}"
 
-      - name: Upload release archive
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: |
-            PWSP-Linux.zip
+      - name: Generate checksum
+        run: sha256sum PWSP-Linux.zip > PWSP-Linux.zip.sha256
+
+      - name: Create Release
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            PWSP-Linux.zip \
+            PWSP-Linux.zip.sha256 \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
