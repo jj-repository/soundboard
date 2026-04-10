@@ -12,7 +12,7 @@ keywords = ["soundpad", "pipewire", "audio", "cli", "gui"]
 
 
 [dependencies]
-tokio = { version = "1.51.0", features = ["full"] }
+tokio = { version = "1.51.1", features = ["full"] }
 async-trait = "0.1.89"
 
 serde = { version = "1.0.228", features = ["derive"] }
@@ -32,7 +32,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 global-hotkey = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 semver = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 open = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
