@@ -1,5 +1,5 @@
-use crate::gui::{SUPPORTED_EXTENSIONS, SoundpadGui};
 use crate::gui::hotkeys::key_display_name;
+use crate::gui::{SoundpadGui, SUPPORTED_EXTENSIONS};
 use egui::{
     Align, AtomExt, Button, Color32, ComboBox, FontFamily, Key, Label, Layout, Modifiers, RichText,
     ScrollArea, Slider, TextEdit, Ui, Vec2,
@@ -36,17 +36,17 @@ impl SoundpadGui {
             ui.add_space(80.0);
 
             ui.label(
-                RichText::new(format!("{} Welcome to PWSP!", icons::ICON_MUSIC_NOTE))
-                    .size(32.0)
-                    .color(Color32::WHITE),
+                RichText::new(format!(
+                    "{} Welcome to PWSP!",
+                    icons::ICON_MUSIC_NOTE.codepoint
+                ))
+                .size(32.0)
+                .color(Color32::WHITE),
             );
 
             ui.add_space(20.0);
 
-            ui.label(
-                RichText::new("Please select a folder to store your sounds.")
-                    .size(16.0),
-            );
+            ui.label(RichText::new("Please select a folder to store your sounds.").size(16.0));
 
             ui.add_space(8.0);
 
@@ -72,7 +72,13 @@ impl SoundpadGui {
             }
 
             ui.horizontal(|ui| {
-                if ui.button(format!("{} Choose Folder...", icons::ICON_FOLDER_OPEN)).clicked() {
+                if ui
+                    .button(format!(
+                        "{} Choose Folder...",
+                        icons::ICON_FOLDER_OPEN.codepoint
+                    ))
+                    .clicked()
+                {
                     let file_dialog = rfd::FileDialog::new();
                     if let Some(path) = file_dialog.pick_folder() {
                         self.app_state.pending_sounds_folder = Some(path);
@@ -86,7 +92,10 @@ impl SoundpadGui {
             let can_continue = self.app_state.pending_sounds_folder.is_some();
 
             if ui
-                .add_enabled(can_continue, Button::new(format!("{} Continue", icons::ICON_CHECK)))
+                .add_enabled(
+                    can_continue,
+                    Button::new(format!("{} Continue", icons::ICON_CHECK.codepoint)),
+                )
                 .clicked()
             {
                 if let Some(path) = self.app_state.pending_sounds_folder.take() {
@@ -163,7 +172,11 @@ impl SoundpadGui {
             ui.add_space(10.0);
 
             // --------- Output Device Selection ----------
-            ui.label(RichText::new("Audio Output").color(Color32::WHITE).monospace());
+            ui.label(
+                RichText::new("Audio Output")
+                    .color(Color32::WHITE)
+                    .monospace(),
+            );
             ui.add_space(5.0);
 
             let mut outputs: Vec<(&String, &String)> =
@@ -201,7 +214,11 @@ impl SoundpadGui {
             ui.add_space(10.0);
 
             // --------- Global Hotkeys Section ----------
-            ui.label(RichText::new("Global Hotkeys").color(Color32::WHITE).monospace());
+            ui.label(
+                RichText::new("Global Hotkeys")
+                    .color(Color32::WHITE)
+                    .monospace(),
+            );
             ui.add_space(5.0);
 
             let hotkeys_enabled_response =
@@ -298,7 +315,11 @@ impl SoundpadGui {
             ui.add_space(10.0);
 
             // --------- Sounds Folder Section ----------
-            ui.label(RichText::new("Sounds Folder").color(Color32::WHITE).monospace());
+            ui.label(
+                RichText::new("Sounds Folder")
+                    .color(Color32::WHITE)
+                    .monospace(),
+            );
             ui.add_space(5.0);
 
             if let Some(ref path) = self.config.sounds_folder.clone() {
@@ -312,16 +333,28 @@ impl SoundpadGui {
                 });
 
                 ui.horizontal(|ui| {
-                    if ui.button(format!("{} Change...", icons::ICON_FOLDER)).clicked() {
+                    if ui
+                        .button(format!("{} Change...", icons::ICON_FOLDER.codepoint))
+                        .clicked()
+                    {
                         self.pick_sounds_folder();
                     }
-                    if ui.button(format!("{} Open Folder", icons::ICON_FOLDER_OPEN)).clicked() {
+                    if ui
+                        .button(format!("{} Open Folder", icons::ICON_FOLDER_OPEN.codepoint))
+                        .clicked()
+                    {
                         self.open_sounds_folder();
                     }
                 });
             } else {
                 ui.label(RichText::new("Not configured").weak());
-                if ui.button(format!("{} Set Sounds Folder...", icons::ICON_FOLDER_OPEN)).clicked() {
+                if ui
+                    .button(format!(
+                        "{} Set Sounds Folder...",
+                        icons::ICON_FOLDER_OPEN.codepoint
+                    ))
+                    .clicked()
+                {
                     self.app_state.show_sounds_folder_setup = true;
                 }
             }
@@ -341,7 +374,10 @@ impl SoundpadGui {
 
             // Auto-check updates toggle
             let mut auto_check = self.config.auto_check_updates;
-            if ui.checkbox(&mut auto_check, "Check for updates on startup").changed() {
+            if ui
+                .checkbox(&mut auto_check, "Check for updates on startup")
+                .changed()
+            {
                 self.config.auto_check_updates = auto_check;
                 let _ = self.config.save_to_file();
             }
@@ -366,7 +402,11 @@ impl SoundpadGui {
                         }
                     });
                 }
-                UpdateStatus::UpdateAvailable { latest_version, release_url, download_url } => {
+                UpdateStatus::UpdateAvailable {
+                    latest_version,
+                    release_url,
+                    download_url,
+                } => {
                     ui.label(
                         RichText::new(format!("New version available: v{}", latest_version))
                             .color(Color32::YELLOW),
@@ -379,10 +419,9 @@ impl SoundpadGui {
                     let release_url_clone = release_url.clone();
 
                     ui.horizontal(|ui| {
-                        if download_url_clone.is_some()
-                            && ui.button("Download update").clicked() {
-                                should_download = true;
-                            }
+                        if download_url_clone.is_some() && ui.button("Download update").clicked() {
+                            should_download = true;
+                        }
                         if ui.button("View release").clicked() {
                             should_open_release = true;
                         }
@@ -465,7 +504,11 @@ impl SoundpadGui {
         }
 
         // Check if any layers are active
-        let has_active_layers = self.audio_player_state.layers.iter().any(|l| l.is_playing || !l.is_empty);
+        let has_active_layers = self
+            .audio_player_state
+            .layers
+            .iter()
+            .any(|l| l.is_playing || !l.is_empty);
 
         if !has_active_layers {
             return;
@@ -475,14 +518,20 @@ impl SoundpadGui {
         let mut layer_action: Option<LayerAction> = None;
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} Layers:", icons::ICON_LAYERS)).size(12.0).weak());
+            ui.label(
+                RichText::new(format!("{} Layers:", icons::ICON_LAYERS.codepoint))
+                    .size(12.0)
+                    .weak(),
+            );
 
             for (i, layer) in self.audio_player_state.layers.iter().enumerate() {
                 if layer.is_empty && !layer.is_playing {
                     continue;
                 }
 
-                let file_name = layer.current_file.as_ref()
+                let file_name = layer
+                    .current_file
+                    .as_ref()
                     .and_then(|p| p.file_stem())
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "...".to_string());
@@ -495,14 +544,20 @@ impl SoundpadGui {
                     icons::ICON_STOP
                 };
 
-                let layer_text = format!("{} {}:{}", status_icon, i + 1, truncate_string(&file_name, 12));
+                let layer_text = format!(
+                    "{} {}:{}",
+                    status_icon.codepoint,
+                    i + 1,
+                    truncate_string(&file_name, 12)
+                );
                 let color = if layer.is_playing {
                     Color32::LIGHT_GREEN
                 } else {
                     Color32::GRAY
                 };
 
-                let layer_btn = Button::new(RichText::new(&layer_text).size(11.0).color(color)).frame(false);
+                let layer_btn =
+                    Button::new(RichText::new(&layer_text).size(11.0).color(color)).frame(false);
                 let layer_response = ui.add(layer_btn);
 
                 if layer_response.clicked() {
@@ -515,8 +570,11 @@ impl SoundpadGui {
 
             // Stop all layers button
             let stop_all_btn = Button::new(
-                RichText::new(format!("{} Stop All", icons::ICON_STOP)).size(11.0).color(Color32::LIGHT_RED)
-            ).frame(false);
+                RichText::new(format!("{} Stop All", icons::ICON_STOP.codepoint))
+                    .size(11.0)
+                    .color(Color32::LIGHT_RED),
+            )
+            .frame(false);
             let stop_all_response = ui.add(stop_all_btn);
             if stop_all_response.clicked() {
                 layer_action = Some(LayerAction::StopAll);
@@ -566,7 +624,8 @@ impl SoundpadGui {
             )
             .frame(false);
 
-            let loop_button_response = ui.add_sized([BUTTON_CORNER_RADIUS, CONTROL_SIZE], loop_button);
+            let loop_button_response =
+                ui.add_sized([BUTTON_CORNER_RADIUS, CONTROL_SIZE], loop_button);
             if loop_button_response.clicked() {
                 self.toggle_loop();
             }
@@ -684,9 +743,12 @@ impl SoundpadGui {
 
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    RichText::new(format!("{} Drop files to import", icons::ICON_FILE_DOWNLOAD))
-                        .size(28.0)
-                        .color(Color32::WHITE),
+                    RichText::new(format!(
+                        "{} Drop files to import",
+                        icons::ICON_FILE_DOWNLOAD.codepoint
+                    ))
+                    .size(28.0)
+                    .color(Color32::WHITE),
                 );
             });
             return;
@@ -711,15 +773,13 @@ impl SoundpadGui {
             // Make the divider draggable
             let divider_id = ui.id().with("sidebar_divider");
             let sense = egui::Sense::drag();
-            let divider_interact = ui.interact(
-                divider_rect.expand2(Vec2::new(4.0, 0.0)),
-                divider_id,
-                sense,
-            );
+            let divider_interact =
+                ui.interact(divider_rect.expand2(Vec2::new(4.0, 0.0)), divider_id, sense);
 
             if divider_interact.dragged() {
                 let delta = divider_interact.drag_delta().x;
-                self.config.sidebar_width = (self.config.sidebar_width + delta).clamp(min_sidebar, max_sidebar);
+                self.config.sidebar_width =
+                    (self.config.sidebar_width + delta).clamp(min_sidebar, max_sidebar);
             }
 
             if divider_interact.drag_stopped() {
@@ -749,25 +809,33 @@ impl SoundpadGui {
                 ui.add_space(4.0);
 
                 // "All Sounds" - special virtual playlist (always first)
-                let is_all_sounds_selected = self.app_state.current_playlist.as_deref() == Some("All Sounds");
-                let mut all_sounds_text = RichText::new(format!("{} All Sounds", icons::ICON_LIBRARY_MUSIC));
+                let is_all_sounds_selected =
+                    self.app_state.current_playlist.as_deref() == Some("All Sounds");
+                let mut all_sounds_text = RichText::new(format!(
+                    "{} All Sounds",
+                    icons::ICON_LIBRARY_MUSIC.codepoint
+                ));
                 if is_all_sounds_selected {
                     all_sounds_text = all_sounds_text.color(Color32::LIGHT_GREEN);
                 }
 
-                let all_sounds_button = Button::new(all_sounds_text.atom_max_width(area_size.x - 36.0)).frame(false);
+                let all_sounds_button =
+                    Button::new(all_sounds_text.atom_max_width(area_size.x - 36.0)).frame(false);
                 if ui.add(all_sounds_button).clicked() {
                     self.open_playlist("All Sounds");
                 }
 
                 // "Favourites" - special virtual playlist showing favorited sounds
-                let is_favourites_selected = self.app_state.current_playlist.as_deref() == Some("Favourites");
-                let mut favourites_text = RichText::new(format!("{} Favourites", icons::ICON_STAR));
+                let is_favourites_selected =
+                    self.app_state.current_playlist.as_deref() == Some("Favourites");
+                let mut favourites_text =
+                    RichText::new(format!("{} Favourites", icons::ICON_STAR.codepoint));
                 if is_favourites_selected {
                     favourites_text = favourites_text.color(Color32::GOLD);
                 }
 
-                let favourites_button = Button::new(favourites_text.atom_max_width(area_size.x - 36.0)).frame(false);
+                let favourites_button =
+                    Button::new(favourites_text.atom_max_width(area_size.x - 36.0)).frame(false);
                 if ui.add(favourites_button).clicked() {
                     self.open_playlist("Favourites");
                 }
@@ -779,7 +847,8 @@ impl SoundpadGui {
                 let mut drop_target_index: Option<usize> = None;
 
                 for (playlist_index, playlist_name) in playlists.iter().enumerate() {
-                    let is_editing = self.app_state.editing_category.as_ref() == Some(playlist_name);
+                    let is_editing =
+                        self.app_state.editing_category.as_ref() == Some(playlist_name);
 
                     if is_editing {
                         // Show text input for renaming
@@ -800,15 +869,22 @@ impl SoundpadGui {
                             }
                         });
                     } else {
-                        let is_selected = self.app_state.current_playlist.as_deref() == Some(playlist_name);
-                        let is_being_dragged = self.app_state.dragging_playlist.as_ref() == Some(playlist_name);
+                        let is_selected =
+                            self.app_state.current_playlist.as_deref() == Some(playlist_name);
+                        let is_being_dragged =
+                            self.app_state.dragging_playlist.as_ref() == Some(playlist_name);
 
                         // Create a frame for the playlist row that can be dragged
                         let row_id = ui.id().with(("playlist_row", playlist_name));
                         let row_response = ui.horizontal(|ui| {
-                            let mut playlist_button_text = RichText::new(format!("{} {}", icons::ICON_QUEUE_MUSIC, playlist_name));
+                            let mut playlist_button_text = RichText::new(format!(
+                                "{} {}",
+                                icons::ICON_QUEUE_MUSIC.codepoint,
+                                playlist_name
+                            ));
                             if is_selected {
-                                playlist_button_text = playlist_button_text.color(Color32::LIGHT_BLUE);
+                                playlist_button_text =
+                                    playlist_button_text.color(Color32::LIGHT_BLUE);
                             }
                             if is_being_dragged {
                                 playlist_button_text = playlist_button_text.color(Color32::YELLOW);
@@ -840,9 +916,9 @@ impl SoundpadGui {
                             }
 
                             // Edit button
-                            let edit_button = Button::new(
-                                RichText::new(icons::ICON_EDIT).size(12.0)
-                            ).frame(false);
+                            let edit_button =
+                                Button::new(RichText::new(icons::ICON_EDIT).size(12.0))
+                                    .frame(false);
                             let edit_response = ui.add_sized([18.0, 18.0], edit_button);
                             if edit_response.clicked() {
                                 self.app_state.editing_category = Some(playlist_name.clone());
@@ -850,8 +926,10 @@ impl SoundpadGui {
                             }
 
                             // Delete button
-                            let delete_playlist_button = Button::new(icons::ICON_DELETE).frame(false);
-                            let delete_playlist_response = ui.add_sized([18.0, 18.0], delete_playlist_button);
+                            let delete_playlist_button =
+                                Button::new(icons::ICON_DELETE).frame(false);
+                            let delete_playlist_response =
+                                ui.add_sized([18.0, 18.0], delete_playlist_button);
                             if delete_playlist_response.clicked() {
                                 self.delete_playlist(playlist_name);
                             }
@@ -883,7 +961,9 @@ impl SoundpadGui {
                     if let Some(dragging_name) = self.app_state.dragging_playlist.take() {
                         if let Some(target_index) = drop_target_index {
                             // Find current index
-                            if let Some(current_index) = playlists.iter().position(|n| n == &dragging_name) {
+                            if let Some(current_index) =
+                                playlists.iter().position(|n| n == &dragging_name)
+                            {
                                 if current_index != target_index {
                                     self.move_playlist(current_index, target_index);
                                 }
@@ -930,7 +1010,10 @@ impl SoundpadGui {
                     // Only show buttons if sounds folder is configured
                     if self.config.sounds_folder.is_some() {
                         // Open sounds folder button (bottom)
-                        let open_folder_button = Button::new(format!("{} Open Sounds Folder", icons::ICON_FOLDER_OPEN));
+                        let open_folder_button = Button::new(format!(
+                            "{} Open Sounds Folder",
+                            icons::ICON_FOLDER_OPEN.codepoint
+                        ));
                         if ui.add(open_folder_button).clicked() {
                             self.open_sounds_folder();
                         }
@@ -938,8 +1021,13 @@ impl SoundpadGui {
                         ui.add_space(4.0);
 
                         // Import sound button (top)
-                        let import_button = Button::new(format!("{} Add Sound", icons::ICON_ADD));
-                        if ui.add(import_button).on_hover_text("Import sound file to sounds folder").clicked() {
+                        let import_button =
+                            Button::new(format!("{} Add Sound", icons::ICON_ADD.codepoint));
+                        if ui
+                            .add(import_button)
+                            .on_hover_text("Import sound file to sounds folder")
+                            .clicked()
+                        {
                             self.import_sounds_dialog();
                         }
                     }
@@ -961,7 +1049,10 @@ impl SoundpadGui {
             // Tag filter dropdown
             let all_tags = self.get_all_tags();
             if !all_tags.is_empty() {
-                let filter_text = self.app_state.filter_by_tag.as_ref()
+                let filter_text = self
+                    .app_state
+                    .filter_by_tag
+                    .as_ref()
                     .map(|t| format!("#{}", t))
                     .unwrap_or_else(|| "Filter by tag".to_string());
 
@@ -969,13 +1060,19 @@ impl SoundpadGui {
                     .selected_text(&filter_text)
                     .width(100.0)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_label(self.app_state.filter_by_tag.is_none(), "All sounds").clicked() {
+                        if ui
+                            .selectable_label(self.app_state.filter_by_tag.is_none(), "All sounds")
+                            .clicked()
+                        {
                             self.app_state.filter_by_tag = None;
                         }
                         ui.separator();
                         for tag in &all_tags {
                             let is_selected = self.app_state.filter_by_tag.as_ref() == Some(tag);
-                            if ui.selectable_label(is_selected, format!("#{}", tag)).clicked() {
+                            if ui
+                                .selectable_label(is_selected, format!("#{}", tag))
+                                .clicked()
+                            {
                                 self.app_state.filter_by_tag = Some(tag.clone());
                             }
                         }
@@ -988,12 +1085,20 @@ impl SoundpadGui {
     fn draw_playlist_header(&mut self, ui: &mut Ui) {
         if let Some(ref playlist_name) = self.app_state.current_playlist {
             let is_all_sounds = playlist_name == "All Sounds";
-            let icon = if is_all_sounds { icons::ICON_LIBRARY_MUSIC } else { icons::ICON_QUEUE_MUSIC };
-            let color = if is_all_sounds { Color32::LIGHT_GREEN } else { Color32::LIGHT_BLUE };
+            let icon = if is_all_sounds {
+                icons::ICON_LIBRARY_MUSIC
+            } else {
+                icons::ICON_QUEUE_MUSIC
+            };
+            let color = if is_all_sounds {
+                Color32::LIGHT_GREEN
+            } else {
+                Color32::LIGHT_BLUE
+            };
 
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} {}", icon, playlist_name))
+                    RichText::new(format!("{} {}", icon.codepoint, playlist_name))
                         .color(color)
                         .monospace(),
                 );
@@ -1014,12 +1119,15 @@ impl SoundpadGui {
 
                 ui.vertical(|ui| {
                     // Check if viewing a playlist
-                    if let Some(ref playlist_name) = self.app_state.current_playlist.clone() {
-                        let is_user_playlist = playlist_name != "All Sounds" && playlist_name != "Favourites";
+                    if let Some(playlist_name) = self.app_state.current_playlist.clone() {
+                        let is_user_playlist =
+                            playlist_name != "All Sounds" && playlist_name != "Favourites";
 
                         // For user playlists, use ordered sounds; for virtual playlists, use cached sorted files
                         let files: Vec<_> = if is_user_playlist {
-                            self.config.categories.get(playlist_name)
+                            self.config
+                                .categories
+                                .get(&playlist_name)
                                 .map(|p| p.sounds.clone())
                                 .unwrap_or_default()
                         } else {
@@ -1029,7 +1137,11 @@ impl SoundpadGui {
                                 f.sort();
                                 self.app_state.sorted_files_cache = Some(f);
                             }
-                            self.app_state.sorted_files_cache.clone().unwrap_or_default()
+                            self.app_state
+                                .sorted_files_cache
+                                .as_ref()
+                                .cloned()
+                                .unwrap_or_default()
                         };
 
                         let search_query = self.app_state.search_query.to_lowercase();
@@ -1038,10 +1150,18 @@ impl SoundpadGui {
                         if files.is_empty() {
                             if playlist_name == "All Sounds" {
                                 ui.label(RichText::new("No sounds in your sounds folder").weak());
-                                ui.label(RichText::new("Use 'Add Sound' to import sounds").weak().size(11.0));
+                                ui.label(
+                                    RichText::new("Use 'Add Sound' to import sounds")
+                                        .weak()
+                                        .size(11.0),
+                                );
                             } else {
                                 ui.label(RichText::new("No sounds in this playlist").weak());
-                                ui.label(RichText::new("Add sounds using the + button on files").weak().size(11.0));
+                                ui.label(
+                                    RichText::new("Add sounds using the + button on files")
+                                        .weak()
+                                        .size(11.0),
+                                );
                             }
                         } else {
                             let mut drop_target_index: Option<usize> = None;
@@ -1060,7 +1180,9 @@ impl SoundpadGui {
 
                                 // Filter by tag if set
                                 if let Some(ref filter_tag) = self.app_state.filter_by_tag {
-                                    if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
+                                    if let Some(metadata) =
+                                        self.config.sound_metadata.get(entry_path)
+                                    {
                                         if !metadata.has_tag(filter_tag) {
                                             continue;
                                         }
@@ -1071,19 +1193,26 @@ impl SoundpadGui {
 
                                 // For user playlists, wrap in drag-drop handling
                                 if is_user_playlist {
-                                    let is_being_dragged = self.app_state.dragging_sound.as_ref() == Some(entry_path);
+                                    let is_being_dragged =
+                                        self.app_state.dragging_sound.as_ref() == Some(entry_path);
                                     let row_id = ui.id().with(("sound_row", entry_path));
 
                                     let row_response = ui.horizontal(|ui| {
                                         // Draw the row content with drag support
-                                        self.draw_playlist_file_row_draggable(ui, entry_path, playlist_name, is_being_dragged);
+                                        self.draw_playlist_file_row_draggable(
+                                            ui,
+                                            entry_path,
+                                            &playlist_name,
+                                            is_being_dragged,
+                                        );
                                     });
 
                                     // Check if this row is a drop target
                                     let row_rect = row_response.response.rect;
                                     if let Some(ref dragging_path) = self.app_state.dragging_sound {
                                         if dragging_path != entry_path {
-                                            let interact = ui.interact(row_rect, row_id, egui::Sense::hover());
+                                            let interact =
+                                                ui.interact(row_rect, row_id, egui::Sense::hover());
                                             if interact.hovered() {
                                                 let line_y = row_rect.top();
                                                 ui.painter().hline(
@@ -1096,7 +1225,7 @@ impl SoundpadGui {
                                         }
                                     }
                                 } else {
-                                    self.draw_playlist_file_row(ui, entry_path, playlist_name);
+                                    self.draw_playlist_file_row(ui, entry_path, &playlist_name);
                                 }
                             }
 
@@ -1104,9 +1233,15 @@ impl SoundpadGui {
                             if is_user_playlist && ui.input(|i| i.pointer.any_released()) {
                                 if let Some(dragging_path) = self.app_state.dragging_sound.take() {
                                     if let Some(target_index) = drop_target_index {
-                                        if let Some(current_index) = files.iter().position(|p| p == &dragging_path) {
+                                        if let Some(current_index) =
+                                            files.iter().position(|p| p == &dragging_path)
+                                        {
                                             if current_index != target_index {
-                                                self.move_sound_in_playlist(playlist_name, current_index, target_index);
+                                                self.move_sound_in_playlist(
+                                                    &playlist_name,
+                                                    current_index,
+                                                    target_index,
+                                                );
                                             }
                                         }
                                     }
@@ -1122,7 +1257,11 @@ impl SoundpadGui {
 
                             if sounds.is_empty() {
                                 ui.label(RichText::new("No sounds in this category").weak());
-                                ui.label(RichText::new("Add sounds using the + button on files").weak().size(11.0));
+                                ui.label(
+                                    RichText::new("Add sounds using the + button on files")
+                                        .weak()
+                                        .size(11.0),
+                                );
                             } else {
                                 for entry_path in &sounds {
                                     let file_name = entry_path
@@ -1149,7 +1288,9 @@ impl SoundpadGui {
                         let search_query = search_query.trim();
 
                         // Collect favorites from current directory using set intersection (O(n) instead of O(n*m))
-                        let mut current_dir_favorites: Vec<_> = self.config.favorites
+                        let mut current_dir_favorites: Vec<_> = self
+                            .config
+                            .favorites
                             .intersection(&self.app_state.files)
                             .cloned()
                             .collect();
@@ -1198,7 +1339,9 @@ impl SoundpadGui {
 
                             // Apply tag filter
                             if let Some(ref filter_tag) = tag_filter {
-                                let has_tag = self.config.sound_metadata
+                                let has_tag = self
+                                    .config
+                                    .sound_metadata
                                     .get(entry_path)
                                     .map(|m| m.has_tag(filter_tag))
                                     .unwrap_or(false);
@@ -1228,10 +1371,12 @@ impl SoundpadGui {
                 .unwrap_or_default();
 
             let metadata = self.config.sound_metadata.get(&file_path).cloned();
-            let mut custom_name = metadata.as_ref()
+            let mut custom_name = metadata
+                .as_ref()
                 .and_then(|m| m.custom_name.clone())
                 .unwrap_or_default();
-            let tags: Vec<String> = metadata.as_ref()
+            let tags: Vec<String> = metadata
+                .as_ref()
                 .map(|m| {
                     let mut t: Vec<_> = m.tags.iter().cloned().collect();
                     t.sort();
@@ -1255,10 +1400,14 @@ impl SoundpadGui {
                         let response = ui.add(
                             TextEdit::singleline(&mut custom_name)
                                 .hint_text(&file_name)
-                                .desired_width(180.0)
+                                .desired_width(180.0),
                         );
                         if response.changed() {
-                            let name = if custom_name.is_empty() { None } else { Some(custom_name.clone()) };
+                            let name = if custom_name.is_empty() {
+                                None
+                            } else {
+                                Some(custom_name.clone())
+                            };
                             self.set_sound_custom_name(&file_path, name);
                         }
                     });
@@ -1269,7 +1418,7 @@ impl SoundpadGui {
                     ui.label("Tags:");
                     ui.horizontal_wrapped(|ui| {
                         for tag in &tags {
-                            let tag_text = format!("#{} {}", tag, icons::ICON_CLOSE);
+                            let tag_text = format!("#{} {}", tag, icons::ICON_CLOSE.codepoint);
                             if ui.button(RichText::new(&tag_text).size(11.0)).clicked() {
                                 self.remove_sound_tag(&file_path, tag);
                             }
@@ -1280,15 +1429,16 @@ impl SoundpadGui {
                         let response = ui.add(
                             TextEdit::singleline(&mut self.app_state.tag_input)
                                 .hint_text("Add tag...")
-                                .desired_width(150.0)
+                                .desired_width(150.0),
                         );
                         if ((response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
                             || ui.button(icons::ICON_ADD).clicked())
-                            && !self.app_state.tag_input.is_empty() {
-                                let tag = self.app_state.tag_input.clone();
-                                self.add_sound_tag(&file_path, &tag);
-                                self.app_state.tag_input.clear();
-                            }
+                            && !self.app_state.tag_input.is_empty()
+                        {
+                            let tag = self.app_state.tag_input.clone();
+                            self.add_sound_tag(&file_path, &tag);
+                            self.app_state.tag_input.clear();
+                        }
                     });
 
                     ui.add_space(8.0);
@@ -1304,7 +1454,12 @@ impl SoundpadGui {
         }
     }
 
-    fn draw_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, in_favorites_section: bool) {
+    fn draw_file_row(
+        &mut self,
+        ui: &mut Ui,
+        entry_path: &std::path::PathBuf,
+        in_favorites_section: bool,
+    ) {
         let original_file_name = entry_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -1315,17 +1470,21 @@ impl SoundpadGui {
 
         // Get metadata for this file
         let metadata = self.config.sound_metadata.get(entry_path).cloned();
-        let display_name = metadata.as_ref()
+        let display_name = metadata
+            .as_ref()
             .and_then(|m| m.custom_name.clone())
             .unwrap_or_else(|| original_file_name.clone());
-        let tags: Vec<String> = metadata.as_ref()
+        let tags: Vec<String> = metadata
+            .as_ref()
             .map(|m| m.tags.iter().cloned().collect())
             .unwrap_or_default();
 
         ui.horizontal(|ui| {
             // Favorite toggle button (star icon)
             let star_icon = if is_favorite {
-                RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+                RichText::new(icons::ICON_STAR)
+                    .size(14.0)
+                    .color(Color32::GOLD)
             } else {
                 RichText::new(icons::ICON_STAR_BORDER).size(14.0)
             };
@@ -1334,7 +1493,11 @@ impl SoundpadGui {
             if star_response.clicked() {
                 self.toggle_favorite(&entry_path.clone());
             }
-            let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+            let hover_text = if is_favorite {
+                "Remove from favorites"
+            } else {
+                "Add to favorites"
+            };
             if star_response.hovered() {
                 star_response.on_hover_text(hover_text);
             }
@@ -1342,8 +1505,7 @@ impl SoundpadGui {
             // Preview button (speakers only) - hide in favorites section to avoid duplication
             if !in_favorites_section {
                 let preview_button =
-                    Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
-                        .frame(false);
+                    Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0)).frame(false);
                 let preview_response = ui.add_sized([18.0, 18.0], preview_button);
                 if preview_response.clicked() {
                     self.preview_file(entry_path);
@@ -1356,21 +1518,22 @@ impl SoundpadGui {
             // Add to category button (only show if there are categories)
             if !categories.is_empty() && !in_favorites_section {
                 let add_to_cat_button =
-                    Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0))
-                        .frame(false);
+                    Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0)).frame(false);
                 let add_to_cat_response = ui.add_sized([18.0, 18.0], add_to_cat_button);
 
                 add_to_cat_response.context_menu(|ui| {
                     ui.label(RichText::new("Add to category:").weak().size(11.0));
                     ui.separator();
                     for cat_name in &categories {
-                        let in_category = self.config.categories
+                        let in_category = self
+                            .config
+                            .categories
                             .get(cat_name)
                             .map(|c| c.contains(entry_path))
                             .unwrap_or(false);
 
                         let label = if in_category {
-                            format!("{} {} (added)", icons::ICON_CHECK, cat_name)
+                            format!("{} {} (added)", icons::ICON_CHECK.codepoint, cat_name)
                         } else {
                             cat_name.clone()
                         };
@@ -1412,21 +1575,26 @@ impl SoundpadGui {
                     ui.label(
                         RichText::new(format!("#{}", tag))
                             .size(10.0)
-                            .color(Color32::LIGHT_BLUE)
+                            .color(Color32::LIGHT_BLUE),
                     );
                 }
                 if tags.len() > 3 {
                     ui.label(
                         RichText::new(format!("+{}", tags.len() - 3))
                             .size(10.0)
-                            .weak()
+                            .weak(),
                     );
                 }
             }
         });
     }
 
-    fn draw_category_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, category_name: &str) {
+    fn draw_category_file_row(
+        &mut self,
+        ui: &mut Ui,
+        entry_path: &std::path::PathBuf,
+        category_name: &str,
+    ) {
         let file_name = entry_path
             .file_name()
             .map(|n| n.to_string_lossy())
@@ -1437,7 +1605,9 @@ impl SoundpadGui {
         ui.horizontal(|ui| {
             // Favorite toggle button (star icon)
             let star_icon = if is_favorite {
-                RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+                RichText::new(icons::ICON_STAR)
+                    .size(14.0)
+                    .color(Color32::GOLD)
             } else {
                 RichText::new(icons::ICON_STAR_BORDER).size(14.0)
             };
@@ -1446,15 +1616,18 @@ impl SoundpadGui {
             if star_response.clicked() {
                 self.toggle_favorite(&entry_path.clone());
             }
-            let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+            let hover_text = if is_favorite {
+                "Remove from favorites"
+            } else {
+                "Add to favorites"
+            };
             if star_response.hovered() {
                 star_response.on_hover_text(hover_text);
             }
 
             // Preview button (speakers only)
             let preview_button =
-                Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
-                    .frame(false);
+                Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0)).frame(false);
             let preview_response = ui.add_sized([18.0, 18.0], preview_button);
             if preview_response.clicked() {
                 self.preview_file(entry_path);
@@ -1464,9 +1637,12 @@ impl SoundpadGui {
             }
 
             // Remove from category button
-            let remove_button =
-                Button::new(RichText::new(icons::ICON_REMOVE_CIRCLE_OUTLINE).size(14.0).color(Color32::LIGHT_RED))
-                    .frame(false);
+            let remove_button = Button::new(
+                RichText::new(icons::ICON_REMOVE_CIRCLE_OUTLINE)
+                    .size(14.0)
+                    .color(Color32::LIGHT_RED),
+            )
+            .frame(false);
             let remove_response = ui.add_sized([18.0, 18.0], remove_button);
             if remove_response.clicked() {
                 self.remove_from_category(category_name, entry_path);
@@ -1498,9 +1674,18 @@ impl SoundpadGui {
     }
 
     /// Draw playlist file row with draggable filename (for user playlists)
-    fn draw_playlist_file_row_draggable(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str, is_being_dragged: bool) {
+    fn draw_playlist_file_row_draggable(
+        &mut self,
+        ui: &mut Ui,
+        entry_path: &std::path::PathBuf,
+        playlist_name: &str,
+        is_being_dragged: bool,
+    ) {
         // Get display name (custom name or filename)
-        let display_name = self.config.sound_metadata.get(entry_path)
+        let display_name = self
+            .config
+            .sound_metadata
+            .get(entry_path)
             .and_then(|m| m.custom_name.clone())
             .unwrap_or_else(|| {
                 entry_path
@@ -1513,7 +1698,9 @@ impl SoundpadGui {
 
         // Favorite toggle button (star icon)
         let star_icon = if is_favorite {
-            RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+            RichText::new(icons::ICON_STAR)
+                .size(14.0)
+                .color(Color32::GOLD)
         } else {
             RichText::new(icons::ICON_STAR_BORDER).size(14.0)
         };
@@ -1522,15 +1709,18 @@ impl SoundpadGui {
         if star_response.clicked() {
             self.toggle_favorite(&entry_path.clone());
         }
-        let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+        let hover_text = if is_favorite {
+            "Remove from favorites"
+        } else {
+            "Add to favorites"
+        };
         if star_response.hovered() {
             star_response.on_hover_text(hover_text);
         }
 
         // Preview button (speakers only)
         let preview_button =
-            Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
-                .frame(false);
+            Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0)).frame(false);
         let preview_response = ui.add_sized([18.0, 18.0], preview_button);
         if preview_response.clicked() {
             self.preview_file(entry_path);
@@ -1546,7 +1736,9 @@ impl SoundpadGui {
 
         // Volume icon (shows if custom volume is set)
         let vol_icon = if has_custom_volume {
-            RichText::new(icons::ICON_VOLUME_DOWN).size(14.0).color(Color32::LIGHT_BLUE)
+            RichText::new(icons::ICON_VOLUME_DOWN)
+                .size(14.0)
+                .color(Color32::LIGHT_BLUE)
         } else {
             RichText::new(icons::ICON_VOLUME_MUTE).size(14.0).weak()
         };
@@ -1559,7 +1751,10 @@ impl SoundpadGui {
         }
 
         vol_response.on_hover_text(if has_custom_volume {
-            format!("Volume: {:.0}% (right-click to reset)", current_volume * 100.0)
+            format!(
+                "Volume: {:.0}% (right-click to reset)",
+                current_volume * 100.0
+            )
         } else {
             "Volume: using global (drag slider to set)".to_string()
         });
@@ -1576,9 +1771,12 @@ impl SoundpadGui {
         }
 
         // Remove from playlist button
-        let remove_button =
-            Button::new(RichText::new(icons::ICON_REMOVE_CIRCLE_OUTLINE).size(14.0).color(Color32::LIGHT_RED))
-                .frame(false);
+        let remove_button = Button::new(
+            RichText::new(icons::ICON_REMOVE_CIRCLE_OUTLINE)
+                .size(14.0)
+                .color(Color32::LIGHT_RED),
+        )
+        .frame(false);
         let remove_response = ui.add_sized([18.0, 18.0], remove_button);
         if remove_response.clicked() {
             self.remove_from_playlist(playlist_name, entry_path);
@@ -1629,7 +1827,9 @@ impl SoundpadGui {
         if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
             if !metadata.tags.is_empty() {
                 ui.add_space(4.0);
-                let tags_text: Vec<String> = metadata.tags.iter()
+                let tags_text: Vec<String> = metadata
+                    .tags
+                    .iter()
                     .take(3)
                     .map(|t| format!("#{}", t))
                     .collect();
@@ -1638,12 +1838,20 @@ impl SoundpadGui {
         }
     }
 
-    fn draw_playlist_file_row(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf, playlist_name: &str) {
+    fn draw_playlist_file_row(
+        &mut self,
+        ui: &mut Ui,
+        entry_path: &std::path::PathBuf,
+        playlist_name: &str,
+    ) {
         let is_all_sounds = playlist_name == "All Sounds";
         let is_favourites = playlist_name == "Favourites";
 
         // Get display name (custom name or filename)
-        let display_name = self.config.sound_metadata.get(entry_path)
+        let display_name = self
+            .config
+            .sound_metadata
+            .get(entry_path)
             .and_then(|m| m.custom_name.clone())
             .unwrap_or_else(|| {
                 entry_path
@@ -1657,7 +1865,9 @@ impl SoundpadGui {
         ui.horizontal(|ui| {
             // Favorite toggle button (star icon)
             let star_icon = if is_favorite {
-                RichText::new(icons::ICON_STAR).size(14.0).color(Color32::GOLD)
+                RichText::new(icons::ICON_STAR)
+                    .size(14.0)
+                    .color(Color32::GOLD)
             } else {
                 RichText::new(icons::ICON_STAR_BORDER).size(14.0)
             };
@@ -1666,15 +1876,18 @@ impl SoundpadGui {
             if star_response.clicked() {
                 self.toggle_favorite(&entry_path.clone());
             }
-            let hover_text = if is_favorite { "Remove from favorites" } else { "Add to favorites" };
+            let hover_text = if is_favorite {
+                "Remove from favorites"
+            } else {
+                "Add to favorites"
+            };
             if star_response.hovered() {
                 star_response.on_hover_text(hover_text);
             }
 
             // Preview button (speakers only)
             let preview_button =
-                Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0))
-                    .frame(false);
+                Button::new(RichText::new(icons::ICON_VOLUME_UP).size(14.0)).frame(false);
             let preview_response = ui.add_sized([18.0, 18.0], preview_button);
             if preview_response.clicked() {
                 self.preview_file(entry_path);
@@ -1686,8 +1899,7 @@ impl SoundpadGui {
             // Add to playlist button (popup menu on click)
             if is_all_sounds {
                 let add_to_playlist_button =
-                    Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0))
-                        .frame(false);
+                    Button::new(RichText::new(icons::ICON_PLAYLIST_ADD).size(14.0)).frame(false);
                 let add_response = ui.add_sized([18.0, 18.0], add_to_playlist_button);
 
                 // Use from_toggle_button_response which handles click-to-toggle automatically
@@ -1724,7 +1936,9 @@ impl SoundpadGui {
 
             // Volume icon (shows if custom volume is set)
             let vol_icon = if has_custom_volume {
-                RichText::new(icons::ICON_VOLUME_DOWN).size(14.0).color(Color32::LIGHT_BLUE)
+                RichText::new(icons::ICON_VOLUME_DOWN)
+                    .size(14.0)
+                    .color(Color32::LIGHT_BLUE)
             } else {
                 RichText::new(icons::ICON_VOLUME_MUTE).size(14.0).weak()
             };
@@ -1737,7 +1951,10 @@ impl SoundpadGui {
             }
 
             vol_response.on_hover_text(if has_custom_volume {
-                format!("Volume: {:.0}% (right-click to reset)", current_volume * 100.0)
+                format!(
+                    "Volume: {:.0}% (right-click to reset)",
+                    current_volume * 100.0
+                )
             } else {
                 "Volume: using global (drag slider to set)".to_string()
             });
@@ -1755,15 +1972,26 @@ impl SoundpadGui {
 
             // Remove/Delete button
             let (remove_icon, remove_color, remove_tooltip) = if is_all_sounds {
-                (icons::ICON_DELETE, Color32::LIGHT_RED, "Delete from sounds folder")
+                (
+                    icons::ICON_DELETE,
+                    Color32::LIGHT_RED,
+                    "Delete from sounds folder",
+                )
             } else if is_favourites {
-                (icons::ICON_STAR_BORDER, Color32::LIGHT_RED, "Remove from favorites")
+                (
+                    icons::ICON_STAR_BORDER,
+                    Color32::LIGHT_RED,
+                    "Remove from favorites",
+                )
             } else {
-                (icons::ICON_REMOVE_CIRCLE_OUTLINE, Color32::LIGHT_RED, "Remove from playlist")
+                (
+                    icons::ICON_REMOVE_CIRCLE_OUTLINE,
+                    Color32::LIGHT_RED,
+                    "Remove from playlist",
+                )
             };
             let remove_button =
-                Button::new(RichText::new(remove_icon).size(14.0).color(remove_color))
-                    .frame(false);
+                Button::new(RichText::new(remove_icon).size(14.0).color(remove_color)).frame(false);
             let remove_response = ui.add_sized([18.0, 18.0], remove_button);
             if remove_response.clicked() {
                 if is_favourites {
@@ -1801,7 +2029,9 @@ impl SoundpadGui {
             if let Some(metadata) = self.config.sound_metadata.get(entry_path) {
                 if !metadata.tags.is_empty() {
                     ui.add_space(4.0);
-                    let tags_text: Vec<String> = metadata.tags.iter()
+                    let tags_text: Vec<String> = metadata
+                        .tags
+                        .iter()
                         .take(3)
                         .map(|t| format!("#{}", t))
                         .collect();
@@ -1843,9 +2073,10 @@ impl SoundpadGui {
 
                 // ---------- Mic Gain ----------
                 ui.label(RichText::new("Mic Gain:").monospace().size(12.0));
-                let mic_gain_slider = Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
-                    .show_value(false)
-                    .step_by(0.1);
+                let mic_gain_slider =
+                    Slider::new(&mut self.app_state.mic_gain_slider_value, 0.5..=3.0)
+                        .show_value(false)
+                        .step_by(0.1);
                 let mic_gain_slider_response = ui.add_sized([60.0, 18.0], mic_gain_slider);
                 if mic_gain_slider_response.drag_stopped() {
                     self.app_state.mic_gain_dragged = true;

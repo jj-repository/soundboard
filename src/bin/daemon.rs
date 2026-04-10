@@ -30,12 +30,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("Another instance is already running.".into());
     }
 
-    get_daemon_config(); // Initialize daemon config
+    get_daemon_config();
 
     #[cfg(target_os = "linux")]
     create_virtual_mic()?;
 
-    // Initialize audio player with proper error handling
     if let Err(e) = init_audio_player().await {
         eprintln!("Failed to initialize audio player: {}", e);
         return Err(format!("Cannot start daemon: audio player initialization failed: {}", e).into());
@@ -46,21 +45,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let runtime_dir = get_runtime_dir();
 
-    // Lock file must remain in scope for entire daemon lifetime - dropping releases the lock
-    let _lock_file = fs::File::create(runtime_dir.join("daemon.lock"))?;
+    let _lock_file = {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(runtime_dir.join("daemon.lock"))?
+        }
+        #[cfg(target_os = "windows")]
+        {
+            fs::File::create(runtime_dir.join("daemon.lock"))?
+        }
+    };
     _lock_file.lock()?;
 
-    // Platform-specific listener setup
     #[cfg(target_os = "linux")]
     let listener = {
         let socket_path = runtime_dir.join("daemon.sock");
-        if fs::metadata(&socket_path).is_ok() {
-            fs::remove_file(&socket_path)?;
-        }
+        // Remove stale socket unconditionally (avoids TOCTOU race)
+        let _ = fs::remove_file(&socket_path);
 
         let listener = tokio::net::UnixListener::bind(&socket_path)?;
 
-        // Security: Set socket permissions to owner-only (0600)
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
 
@@ -109,11 +119,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Maximum IPC message size (10MB) - prevents DoS via memory exhaustion
+// 10MB limit prevents DoS via excessive memory allocation
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
-    // ---------- Read request (start) ----------
     let mut len_bytes = [0u8; 4];
     if stream.read_exact(&mut len_bytes).await.is_err() {
         eprintln!("Failed to read message length from client!");
@@ -122,7 +131,6 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
 
     let request_len = u32::from_le_bytes(len_bytes) as usize;
 
-    // Security: Prevent DoS via excessive memory allocation
     if request_len > MAX_IPC_MESSAGE_SIZE {
         eprintln!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
         return;
@@ -141,17 +149,13 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
             return;
         }
     };
-    // ---------- Read request (end) ----------
 
-    // ---------- Generate response (start) ----------
     let command = parse_command(&request);
     let response: Response = match command {
         Some(cmd) => cmd.execute().await,
         None => Response::new(false, "Unknown command"),
     };
-    // ---------- Generate response (end) ----------
 
-    // ---------- Send response (start) ----------
     let response_data = match serde_json::to_vec(&response) {
         Ok(data) => data,
         Err(e) => {
@@ -168,7 +172,6 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     if stream.write_all(&response_data).await.is_err() {
         eprintln!("Failed to write response to client!");
     }
-    // ---------- Send response (end) ----------
 }
 
 #[cfg(target_os = "linux")]
@@ -191,16 +194,15 @@ async fn player_loop() {
     loop {
         let mut audio_player = get_audio_player().lock().await;
 
-        // Start playback again if loop is enabled
         if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {
-            if let Some(file_path) = audio_player.current_file_path.clone() {
-                if let Err(e) = audio_player.play(&file_path).await {
+            if let Some(ref file_path) = audio_player.current_file_path.clone() {
+                if let Err(e) = audio_player.play(file_path).await {
                     eprintln!("Failed to play looped file: {}", e);
                 }
             }
         }
 
-        drop(audio_player); // Release lock before sleeping
+        drop(audio_player);
         sleep(Duration::from_millis(100)).await;
     }
 }

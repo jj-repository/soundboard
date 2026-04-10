@@ -134,14 +134,20 @@ impl Request {
 
     // Layer commands
     pub fn play_on_layer(layer_index: usize, file_path: &str) -> Self {
-        Request::new("play_on_layer", vec![
-            ("layer_index", &layer_index.to_string()),
-            ("file_path", file_path),
-        ])
+        Request::new(
+            "play_on_layer",
+            vec![
+                ("layer_index", &layer_index.to_string()),
+                ("file_path", file_path),
+            ],
+        )
     }
 
     pub fn stop_layer(layer_index: usize) -> Self {
-        Request::new("stop_layer", vec![("layer_index", &layer_index.to_string())])
+        Request::new(
+            "stop_layer",
+            vec![("layer_index", &layer_index.to_string())],
+        )
     }
 
     pub fn stop_all_layers() -> Self {
@@ -149,10 +155,13 @@ impl Request {
     }
 
     pub fn set_layer_volume(layer_index: usize, volume: f32) -> Self {
-        Request::new("set_layer_volume", vec![
-            ("layer_index", &layer_index.to_string()),
-            ("volume", &volume.to_string()),
-        ])
+        Request::new(
+            "set_layer_volume",
+            vec![
+                ("layer_index", &layer_index.to_string()),
+                ("volume", &volume.to_string()),
+            ],
+        )
     }
 
     pub fn get_layers_info() -> Self {
@@ -197,7 +206,10 @@ mod tests {
 
     #[test]
     fn test_request_new_converts_to_string() {
-        let request = Request::new(String::from("cmd"), vec![(String::from("k"), String::from("v"))]);
+        let request = Request::new(
+            String::from("cmd"),
+            vec![(String::from("k"), String::from("v"))],
+        );
         assert_eq!(request.name, "cmd");
         assert_eq!(request.args.get("k"), Some(&"v".to_string()));
     }
@@ -242,14 +254,20 @@ mod tests {
     fn test_request_play() {
         let request = Request::play("/path/to/file.mp3");
         assert_eq!(request.name, "play");
-        assert_eq!(request.args.get("file_path"), Some(&"/path/to/file.mp3".to_string()));
+        assert_eq!(
+            request.args.get("file_path"),
+            Some(&"/path/to/file.mp3".to_string())
+        );
     }
 
     #[test]
     fn test_request_preview() {
         let request = Request::preview("/path/to/file.wav");
         assert_eq!(request.name, "preview");
-        assert_eq!(request.args.get("file_path"), Some(&"/path/to/file.wav".to_string()));
+        assert_eq!(
+            request.args.get("file_path"),
+            Some(&"/path/to/file.wav".to_string())
+        );
     }
 
     #[test]
@@ -363,7 +381,10 @@ mod tests {
     fn test_request_set_output() {
         let request = Request::set_output("speaker1");
         assert_eq!(request.name, "set_output");
-        assert_eq!(request.args.get("output_name"), Some(&"speaker1".to_string()));
+        assert_eq!(
+            request.args.get("output_name"),
+            Some(&"speaker1".to_string())
+        );
     }
 
     #[test]
@@ -391,7 +412,10 @@ mod tests {
         let request = Request::play_on_layer(0, "/path/to/file.ogg");
         assert_eq!(request.name, "play_on_layer");
         assert_eq!(request.args.get("layer_index"), Some(&"0".to_string()));
-        assert_eq!(request.args.get("file_path"), Some(&"/path/to/file.ogg".to_string()));
+        assert_eq!(
+            request.args.get("file_path"),
+            Some(&"/path/to/file.ogg".to_string())
+        );
     }
 
     #[test]
@@ -487,5 +511,69 @@ mod tests {
         let response: Response = serde_json::from_str(json).unwrap();
         assert!(response.status);
         assert_eq!(response.message, "pong");
+    }
+
+    // --- Edge case tests (TEST-13) ---
+
+    #[test]
+    fn test_request_with_unicode_args() {
+        let request = Request::new("play", vec![("file_path", "/sounds/日本語.mp3")]);
+        let json = serde_json::to_string(&request).unwrap();
+        let deserialized: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.args.get("file_path"),
+            Some(&"/sounds/日本語.mp3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_with_special_chars_in_args() {
+        let request = Request::new(
+            "play",
+            vec![("file_path", "/path/with spaces/file (1).mp3")],
+        );
+        let json = serde_json::to_string(&request).unwrap();
+        let deserialized: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.args.get("file_path"),
+            Some(&"/path/with spaces/file (1).mp3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_with_empty_arg_value() {
+        let request = Request::new("set_input", vec![("input_name", "")]);
+        assert_eq!(request.args.get("input_name"), Some(&String::new()));
+    }
+
+    #[test]
+    fn test_response_with_large_message() {
+        let large_msg = "x".repeat(10_000);
+        let response = Response::new(true, &large_msg);
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.message.len(), 10_000);
+    }
+
+    #[test]
+    fn test_request_invalid_json_rejected() {
+        let result = serde_json::from_str::<Request>("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_response_missing_fields_rejected() {
+        let result = serde_json::from_str::<Response>(r#"{"status":true}"#);
+        assert!(
+            result.is_err(),
+            "response without message field should fail"
+        );
+    }
+
+    #[test]
+    fn test_request_extra_fields_ignored() {
+        let json = r#"{"name":"ping","args":{},"extra":"field"}"#;
+        let request: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(request.name, "ping");
     }
 }

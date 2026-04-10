@@ -79,7 +79,9 @@ pub fn format_time_pair(position: f32, duration: f32) -> String {
 
 pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerState>>) {
     tokio::spawn(async move {
-        let sleep_duration = Duration::from_secs_f32(1.0 / 60.0);
+        let normal_interval = Duration::from_secs_f32(1.0 / 60.0);
+        let mut backoff = Duration::from_millis(100);
+        let max_backoff = Duration::from_secs(5);
         let mut last_error_logged: Option<String> = None;
 
         loop {
@@ -136,7 +138,6 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             let mut error_count = 0;
             let mut first_error: Option<String> = None;
 
-            // Helper macro to handle results with error tracking
             macro_rules! handle_result {
                 ($res:expr) => {
                     match $res {
@@ -178,7 +179,7 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 }
             } else if last_error_logged.is_some() {
                 // Connection restored
-                println!("Daemon connection restored");
+                eprintln!("Daemon connection restored");
                 last_error_logged = None;
             }
 
@@ -295,7 +296,14 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 guard.last_error = first_error.clone();
             }
 
-            sleep(sleep_duration).await;
+            // Exponential backoff when disconnected, normal rate when connected
+            if daemon_connected {
+                backoff = Duration::from_millis(100);
+                sleep(normal_interval).await;
+            } else {
+                sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
         }
     });
 }

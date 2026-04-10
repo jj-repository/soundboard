@@ -1,6 +1,11 @@
 pub mod types;
 pub mod utils;
 
+/// PipeWire node name for the virtual microphone
+pub const VIRTUAL_MIC_NAME: &str = "pwsp-virtual-mic";
+/// PipeWire node name for the daemon's audio output
+pub const DAEMON_OUTPUT_NAME: &str = "alsa_playback.pwsp-daemon";
+
 use std::sync::{Mutex, MutexGuard};
 
 /// Extension trait for Mutex that handles poisoning gracefully

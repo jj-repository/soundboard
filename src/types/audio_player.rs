@@ -6,8 +6,9 @@ use crate::{
     },
 };
 use crate::utils::daemon::get_daemon_config;
-use rodio::{cpal, Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::{cpal, Decoder, Player, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 #[cfg(target_os = "windows")]
 use rodio::cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,8 @@ pub fn get_output_devices() -> HashMap<String, String> {
 
     if let Ok(output_devices) = host.output_devices() {
         for device in output_devices {
-            if let Ok(name) = device.name() {
+            if let Ok(desc) = device.description() {
+                let name = desc.name().to_string();
                 devices.insert(name.clone(), name);
             }
         }
@@ -48,7 +50,9 @@ pub fn get_output_devices() -> HashMap<String, String> {
 /// Get the default output device name
 pub fn get_default_output_device() -> Option<String> {
     let host = cpal::default_host();
-    host.default_output_device().and_then(|d| d.name().ok())
+    host.default_output_device()
+        .and_then(|d| d.description().ok())
+        .map(|desc| desc.name().to_string())
 }
 
 /// Get all available input devices (for mic selection on Windows)
@@ -58,7 +62,8 @@ pub fn get_input_devices() -> HashMap<String, String> {
     let host = cpal::default_host();
     if let Ok(input_devices) = host.input_devices() {
         for device in input_devices {
-            if let Ok(name) = device.name() {
+            if let Ok(desc) = device.description() {
+                let name = desc.name().to_string();
                 devices.insert(name.clone(), name);
             }
         }
@@ -68,7 +73,7 @@ pub fn get_input_devices() -> HashMap<String, String> {
 
 /// Represents a single audio layer that can play sounds independently
 pub struct AudioLayer {
-    pub sink: Sink,
+    pub sink: Player,
     pub volume: f32,
     pub current_file_path: Option<PathBuf>,
     pub duration: Option<f32>,
@@ -76,7 +81,7 @@ pub struct AudioLayer {
 
 impl AudioLayer {
     pub fn new(mixer: &rodio::mixer::Mixer) -> Self {
-        let sink = Sink::connect_new(mixer);
+        let sink = Player::connect_new(mixer);
         sink.set_volume(1.0);
         Self {
             sink,
@@ -143,8 +148,8 @@ impl Source for MicSource {
 }
 
 pub struct AudioPlayer {
-    _stream_handle: OutputStream,
-    sink: Sink, // Main sink for primary playback
+    _stream_handle: MixerDeviceSink,
+    sink: Player, // Main player for primary playback
     layers: Vec<AudioLayer>, // Additional layers for mixing
 
     #[cfg(target_os = "linux")]
@@ -157,7 +162,7 @@ pub struct AudioPlayer {
     #[cfg(target_os = "windows")]
     mic_stop_sender: Option<std::sync::mpsc::Sender<()>>,
     #[cfg(target_os = "windows")]
-    mic_sink: Sink,
+    mic_sink: Player,
 
     pub current_output_device: Option<String>,
 
@@ -205,7 +210,7 @@ impl AudioPlayer {
                             output_name
                         );
                         (
-                            OutputStreamBuilder::open_default_stream()?,
+                            DeviceSinkBuilder::open_default_sink()?,
                             get_default_output_device(),
                         )
                     }
@@ -219,13 +224,13 @@ impl AudioPlayer {
                         match Self::create_stream_for_device(cable_name) {
                             Ok(stream) => (stream, Some(cable_name.clone())),
                             Err(_) => (
-                                OutputStreamBuilder::open_default_stream()?,
+                                DeviceSinkBuilder::open_default_sink()?,
                                 get_default_output_device(),
                             ),
                         }
                     } else {
                         (
-                            OutputStreamBuilder::open_default_stream()?,
+                            DeviceSinkBuilder::open_default_sink()?,
                             get_default_output_device(),
                         )
                     }
@@ -233,14 +238,14 @@ impl AudioPlayer {
                 #[cfg(not(target_os = "windows"))]
                 {
                     (
-                        OutputStreamBuilder::open_default_stream()?,
+                        DeviceSinkBuilder::open_default_sink()?,
                         get_default_output_device(),
                     )
                 }
             };
 
-        let mixer = stream_handle.mixer();
-        let sink = Sink::connect_new(mixer);
+        let mixer: &rodio::mixer::Mixer = stream_handle.mixer();
+        let sink = Player::connect_new(mixer);
         sink.set_volume(default_volume * default_gain);
 
         // Initialize audio layers for mixing
@@ -252,7 +257,7 @@ impl AudioPlayer {
         // Windows: create dedicated sink for mic passthrough audio
         #[cfg(target_os = "windows")]
         let mic_sink = {
-            let s = Sink::connect_new(mixer);
+            let s = Player::connect_new(mixer);
             s.stop();
             s
         };
@@ -306,14 +311,14 @@ impl AudioPlayer {
         Ok(audio_player)
     }
 
-    fn create_stream_for_device(device_name: &str) -> Result<OutputStream, Box<dyn Error>> {
+    fn create_stream_for_device(device_name: &str) -> Result<MixerDeviceSink, Box<dyn Error>> {
         let host = cpal::default_host();
         let devices = host.output_devices()?;
 
         for device in devices {
-            if let Ok(name) = device.name() {
-                if name == device_name {
-                    return Ok(OutputStreamBuilder::from_device(device)?.open_stream()?);
+            if let Ok(desc) = device.description() {
+                if desc.name() == device_name {
+                    return Ok(DeviceSinkBuilder::from_device(device)?.open_sink_or_fallback()?);
                 }
             }
         }
@@ -327,7 +332,8 @@ impl AudioPlayer {
         let host = cpal::default_host();
         if let Ok(devices) = host.output_devices() {
             for device in devices {
-                if let Ok(name) = device.name() {
+                if let Ok(desc) = device.description() {
+                    let name = desc.name().to_string();
                     let lower = name.to_lowercase();
                     if lower.contains("cable input") || lower.contains("vb-audio") {
                         println!("Auto-detected VB-Audio Virtual Cable: {}", name);
@@ -559,10 +565,9 @@ impl AudioPlayer {
             position = 0.0;
         }
 
-        match self.sink.try_seek(Duration::from_secs_f32(position)) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(err.into()),
-        }
+        self.sink
+            .try_seek(Duration::from_secs_f32(position))
+            .map_err(|e| -> Box<dyn Error> { Box::new(e) })
     }
 
     pub fn get_duration(&mut self) -> Result<f32, Box<dyn Error>> {
@@ -707,7 +712,7 @@ impl AudioPlayer {
         // Find the CPAL input device
         let host = cpal::default_host();
         let device = host.input_devices()?
-            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+            .find(|d| d.description().map(|desc| desc.name() == device_name).unwrap_or(false))
             .ok_or_else(|| format!("Input device '{}' not found", device_name))?;
 
         let supported_config = device.default_input_config()?;

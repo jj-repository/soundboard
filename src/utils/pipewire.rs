@@ -1,3 +1,4 @@
+use crate::VIRTUAL_MIC_NAME;
 use crate::types::pipewire::{AudioDevice, DeviceType, Port, Terminate};
 use pipewire::{
     context::ContextRc, link::Link, main_loop::MainLoopRc, properties::properties,
@@ -9,19 +10,37 @@ use tokio::{
     time::{Duration, timeout},
 };
 
+/// Assign a PipeWire port to the appropriate field on an AudioDevice
+fn assign_port_to_device(device: &mut AudioDevice, port: Port) {
+    match port.name.as_str() {
+        "input_FL" => device.input_fl = Some(port),
+        "input_FR" => device.input_fr = Some(port),
+        "output_FL" => device.output_fl = Some(port),
+        "output_FR" => device.output_fr = Some(port),
+        "capture_FL" => device.output_fl = Some(port),
+        "capture_FR" => device.output_fr = Some(port),
+        "input_MONO" => {
+            device.input_fl = Some(port.clone());
+            device.input_fr = Some(port);
+        }
+        "output_MONO" | "capture_MONO" => {
+            device.output_fl = Some(port.clone());
+            device.output_fr = Some(port);
+        }
+        _ => {}
+    }
+}
+
 fn parse_global_object(
     global_object: &GlobalObject<&DictRef>,
 ) -> (Option<AudioDevice>, Option<Port>) {
-    // Only objects with props can be devices/ports
     if let Some(props) = global_object.props {
-        // Only objects with media.class can be devices
         if let Some(media_class) = props.get("media.class") {
             let node_id = global_object.id;
             let node_nick = props.get("node.nick");
             let node_name = props.get("node.name");
             let node_description = props.get("node.description");
 
-            // Check if the device is an input or output
             return if media_class.starts_with("Audio/Source") {
                 let input_device = AudioDevice {
                     id: node_id,
@@ -55,9 +74,7 @@ fn parse_global_object(
             } else {
                 (None, None)
             };
-            // Check if the object is a port
         } else if props.get("port.direction").is_some() {
-            // Safely parse port properties, return None if any parsing fails
             let node_id = match props.get("node.id").and_then(|s| s.parse::<u32>().ok()) {
                 Some(id) => id,
                 None => return (None, None),
@@ -97,7 +114,6 @@ async fn pw_get_global_objects_thread(
         }
     };
 
-    // Stop main loop on Terminate message
     let _receiver = pw_receiver.attach(main_loop.loop_(), {
         let _main_loop = main_loop.clone();
         move |_| _main_loop.quit()
@@ -128,10 +144,7 @@ async fn pw_get_global_objects_thread(
     let _listener = registry
         .add_listener_local()
         .global(move |global| {
-            // Try to parse every global object pipewire finds
             let (device, port) = parse_global_object(global);
-
-            // Send message to the main thread
             let sender_clone = main_sender.clone();
             tokio::task::spawn(async move {
                 sender_clone.send((device, port)).await.ok();
@@ -143,11 +156,9 @@ async fn pw_get_global_objects_thread(
 }
 
 pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), Box<dyn Error>> {
-    // Channels to communicate with pipewire thread
     let (main_sender, mut main_receiver) = mpsc::channel(10);
     let (pw_sender, pw_receiver) = pipewire::channel::channel();
 
-    // Spawn pipewire thread in background
     let _pw_thread =
         tokio::spawn(async move { pw_get_global_objects_thread(main_sender, pw_receiver).await });
 
@@ -156,7 +167,7 @@ pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), B
     let mut ports: Vec<Port> = vec![];
 
     loop {
-        // If we don't receive a message in 100ms, we can assume that pipewire thread is finished
+        // If no message arrives within 100ms, assume the pipewire thread finished enumerating
         match timeout(Duration::from_millis(100), main_receiver.recv()).await {
             Ok(Some((device, port))) => {
                 if let Some(device) = device {
@@ -173,49 +184,17 @@ pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), B
                 }
             }
             Ok(None) | Err(_) => {
-                // Pipewire thread is finished and we can collect our devices
-                // Ignore send error - thread may have already exited
                 let _ = pw_sender.send(Terminate {});
 
                 for port in ports {
                     let node_id = port.node_id;
 
-                    if let Some(input_device) = input_devices.get_mut(&node_id) {
-                        match port.name.as_str() {
-                            "input_FL" => input_device.input_fl = Some(port),
-                            "input_FR" => input_device.input_fr = Some(port),
-                            "output_FL" => input_device.output_fl = Some(port),
-                            "output_FR" => input_device.output_fr = Some(port),
-                            "capture_FL" => input_device.output_fl = Some(port),
-                            "capture_FR" => input_device.output_fr = Some(port),
-                            "input_MONO" => {
-                                input_device.input_fl = Some(port.clone());
-                                input_device.input_fr = Some(port)
-                            }
-                            "capture_MONO" => {
-                                input_device.output_fl = Some(port.clone());
-                                input_device.output_fr = Some(port);
-                            }
-                            _ => {}
-                        }
-                    } else if let Some(output_device) = output_devices.get_mut(&node_id) {
-                        match port.name.as_str() {
-                            "input_FL" => output_device.input_fl = Some(port),
-                            "input_FR" => output_device.input_fr = Some(port),
-                            "output_FL" => output_device.output_fl = Some(port),
-                            "output_FR" => output_device.output_fr = Some(port),
-                            "capture_FL" => output_device.output_fl = Some(port),
-                            "capture_FR" => output_device.output_fr = Some(port),
-                            "output_MONO" => {
-                                output_device.output_fl = Some(port.clone());
-                                output_device.output_fr = Some(port)
-                            }
-                            "capture_MONO" => {
-                                output_device.output_fl = Some(port.clone());
-                                output_device.output_fr = Some(port)
-                            }
-                            _ => {}
-                        }
+                    let device = input_devices
+                        .get_mut(&node_id)
+                        .or_else(|| output_devices.get_mut(&node_id));
+
+                    if let Some(device) = device {
+                        assign_port_to_device(device, port);
                     }
                 }
 
@@ -275,12 +254,12 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
 
         let props = properties!(
             "factory.name" => "support.null-audio-sink",
-            "node.name" => "pwsp-virtual-mic",
+            "node.name" => VIRTUAL_MIC_NAME,
             "node.description" => "PWSP Virtual Mic",
             "media.class" => "Audio/Source/Virtual",
             "audio.position" => "[ FL FR ]",
             "audio.channels" => "2",
-            "object.linger" => "false", // Destroy the node on app exit
+            "object.linger" => "false",
         );
 
         let _node = match core.create_object::<pipewire::node::Node>("adapter", &props) {
@@ -296,7 +275,6 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
             move |_| _main_loop.quit()
         });
 
-        println!("Virtual mic created");
         main_loop.run();
     });
 
@@ -369,10 +347,6 @@ pub fn create_link(
             move |_| _main_loop.quit()
         });
 
-        println!(
-            "Link created: FL: {}-{} FR: {}-{}",
-            output_fl.node_id, input_fl.node_id, output_fr.node_id, input_fr.node_id
-        );
         main_loop.run();
     });
 

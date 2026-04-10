@@ -6,6 +6,8 @@ use crate::{
     },
 };
 #[cfg(target_os = "linux")]
+use crate::{DAEMON_OUTPUT_NAME, VIRTUAL_MIC_NAME};
+#[cfg(target_os = "linux")]
 use crate::utils::pipewire::{create_link, get_all_devices};
 use std::path::PathBuf;
 use std::{error::Error, fs};
@@ -22,13 +24,11 @@ pub const DAEMON_TCP_PORT: u16 = 19735;
 static AUDIO_PLAYER: OnceCell<Mutex<AudioPlayer>> = OnceCell::const_new();
 
 /// Initialize the audio player. Must be called before get_audio_player().
-/// Returns an error if initialization fails.
 pub async fn init_audio_player() -> Result<(), Box<dyn Error + Send + Sync>> {
     if AUDIO_PLAYER.get().is_some() {
-        return Ok(()); // Already initialized
+        return Ok(());
     }
 
-    println!("Initializing audio player");
     let player = AudioPlayer::new()
         .await
         .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
@@ -39,7 +39,6 @@ pub async fn init_audio_player() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 /// Get the audio player. Panics if init_audio_player() was not called first.
-/// Use try_get_audio_player() for a fallible version.
 pub fn get_audio_player() -> &'static Mutex<AudioPlayer> {
     AUDIO_PLAYER
         .get()
@@ -52,7 +51,8 @@ pub fn try_get_audio_player() -> Option<&'static Mutex<AudioPlayer>> {
 }
 
 pub fn get_daemon_config() -> DaemonConfig {
-    DaemonConfig::load_from_file().unwrap_or_else(|_| {
+    DaemonConfig::load_from_file().unwrap_or_else(|e| {
+        eprintln!("Failed to load daemon config ({}), using defaults", e);
         let config = DaemonConfig::default();
         config.save_to_file().ok();
         config
@@ -65,27 +65,26 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
 
     let pwsp_daemon_output = match output_devices
         .into_iter()
-        .find(|d| d.name == "alsa_playback.pwsp-daemon")
+        .find(|d| d.name == DAEMON_OUTPUT_NAME)
     {
         Some(device) => device,
         None => {
-            println!("Could not find pwsp-daemon output device, skipping device linking");
+            eprintln!("Could not find pwsp-daemon output device, skipping device linking");
             return Ok(());
         }
     };
 
     let pwsp_daemon_input = match input_devices
         .into_iter()
-        .find(|d| d.name == "pwsp-virtual-mic")
+        .find(|d| d.name == VIRTUAL_MIC_NAME)
     {
         Some(device) => device,
         None => {
-            println!("Could not find pwsp-daemon input device, skipping device linking");
+            eprintln!("Could not find pwsp-daemon input device, skipping device linking");
             return Ok(());
         }
     };
 
-    // Check if all required ports are available
     match (
         &pwsp_daemon_output.output_fl,
         &pwsp_daemon_output.output_fr,
@@ -134,8 +133,6 @@ pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(&runtime_dir)?;
     }
 
-    // Security: Ensure runtime directory is owner-only (0700) on Linux
-    // On Windows, user directories are already ACL-protected
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -162,12 +159,9 @@ pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    println!("Daemon not found, waiting for it...");
     while !is_daemon_running()? {
         sleep(Duration::from_millis(100)).await;
     }
-
-    println!("Found running daemon");
 
     Ok(())
 }
@@ -178,7 +172,6 @@ async fn send_and_receive(
 ) -> Result<Response, Box<dyn Error + Send + Sync>> {
     use tokio::time::{timeout, Duration};
 
-    // ---------- Send request (start) ----------
     let request_data = serde_json::to_vec(&request)?;
     let request_len = request_data.len() as u32;
 
@@ -191,9 +184,7 @@ async fn send_and_receive(
         .await
         .map_err(|_| "Send timeout")?
         .map_err(|_| "Failed to send request")?;
-    // ---------- Send request (end) ----------
 
-    // ---------- Read response (start) ----------
     const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
 
     let mut len_bytes = [0u8; 4];
@@ -217,7 +208,6 @@ async fn send_and_receive(
         .await
         .map_err(|_| "Read timeout")?
         .map_err(|_| "Failed to read response")?;
-    // ---------- Read response (end) ----------
 
     Ok(serde_json::from_slice(&buffer)?)
 }

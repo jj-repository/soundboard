@@ -1,6 +1,6 @@
 use crate::gui::{MutexExt, SoundpadGui};
 use eframe::{App, Frame as EFrame};
-use egui::{CentralPanel, Context};
+use egui::Ui;
 use pwsp::{
     types::socket::Request,
     utils::{
@@ -10,7 +10,7 @@ use pwsp::{
 };
 
 impl App for SoundpadGui {
-    fn update(&mut self, ctx: &Context, _frame: &mut EFrame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut EFrame) {
         // Check for updates on startup if enabled
         if !self.startup_update_checked && self.config.auto_check_updates {
             self.startup_update_checked = true;
@@ -40,33 +40,33 @@ impl App for SoundpadGui {
         }
 
         self.handle_input(ctx);
+    }
 
-        CentralPanel::default().show(ctx, |ui| {
-            if !is_daemon_running().unwrap_or(false) {
-                self.draw_waiting_for_daemon(ui);
-                return;
-            }
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut EFrame) {
+        if !is_daemon_running().unwrap_or(false) {
+            self.draw_waiting_for_daemon(ui);
+            return;
+        }
 
-            // Show sounds folder setup wizard if needed
-            if self.app_state.show_sounds_folder_setup {
-                self.draw_sounds_folder_setup(ui);
-                return;
-            }
+        // Show sounds folder setup wizard if needed
+        if self.app_state.show_sounds_folder_setup {
+            self.draw_sounds_folder_setup(ui);
+            return;
+        }
 
-            if self.app_state.show_settings {
-                self.draw_settings(ui);
-                return;
-            }
+        if self.app_state.show_settings {
+            self.draw_settings(ui);
+            return;
+        }
 
-            self.draw(ui).ok();
+        self.draw(ui).ok();
 
-            if let Some(force_focus_id) = self.app_state.force_focus_id {
-                ui.memory_mut(|reder| {
-                    reder.request_focus(force_focus_id);
-                });
-                self.app_state.force_focus_id = None;
-            }
-        });
+        if let Some(force_focus_id) = self.app_state.force_focus_id {
+            ui.memory_mut(|mem| {
+                mem.request_focus(force_focus_id);
+            });
+            self.app_state.force_focus_id = None;
+        }
 
         if self.app_state.position_dragged {
             make_request_sync(Request::seek(self.app_state.position_slider_value)).ok();
@@ -138,6 +138,6 @@ impl App for SoundpadGui {
             self.app_state.mic_gain_slider_value = self.audio_player_state.mic_gain;
         }
 
-        ctx.request_repaint_after_secs(1.0 / 60.0);
+        ui.ctx().request_repaint_after_secs(1.0 / 60.0);
     }
 }

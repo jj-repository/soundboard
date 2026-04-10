@@ -1,7 +1,7 @@
 mod draw;
 mod hotkeys;
 mod input;
-pub mod tray;
+pub mod tray; // pub: tray handle is stored in SoundpadGui and started externally
 mod update;
 
 use crate::gui::hotkeys::{HotkeyAction, HotkeyManager};
@@ -138,7 +138,6 @@ impl SoundpadGui {
     }
 
     fn poll_tray_messages(&mut self, ctx: &Context) {
-        // Collect messages first to avoid borrow issues
         let messages: Vec<TrayMessage> = if let Some(ref tray) = self.tray_handle {
             let mut msgs = Vec::new();
             while let Ok(msg) = tray.receiver.try_recv() {
@@ -149,7 +148,6 @@ impl SoundpadGui {
             Vec::new()
         };
 
-        // Process messages
         for msg in messages {
             match msg {
                 TrayMessage::PlayPause => {
@@ -166,7 +164,6 @@ impl SoundpadGui {
     }
 
     fn poll_hotkey_messages(&mut self) {
-        // Collect messages first to avoid borrow issues
         let actions: Vec<HotkeyAction> = if let Some(ref hk) = self.hotkey_manager {
             let mut acts = Vec::new();
             while let Ok(action) = hk.receiver.try_recv() {
@@ -177,7 +174,6 @@ impl SoundpadGui {
             Vec::new()
         };
 
-        // Process actions
         for action in actions {
             match action {
                 HotkeyAction::PlayPause => {
@@ -195,7 +191,6 @@ impl SoundpadGui {
             match receiver.try_recv() {
                 Ok(status) => {
                     self.app_state.update_status = status;
-                    // Clear receiver if we got a final status
                     match &self.app_state.update_status {
                         UpdateStatus::Checking | UpdateStatus::Downloading { .. } => {}
                         _ => {
@@ -218,7 +213,13 @@ impl SoundpadGui {
         self.update_receiver = Some(receiver);
 
         thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    sender.send(UpdateStatus::Error(format!("Failed to create runtime: {}", e))).ok();
+                    return;
+                }
+            };
             let result = rt.block_on(check_for_updates());
 
             let status = match result {
@@ -247,15 +248,14 @@ impl SoundpadGui {
         self.update_receiver = Some(receiver);
 
         thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let result = rt.block_on(download_update(&url, |downloaded, total| {
-                if total > 0 {
-                    let progress = downloaded as f32 / total as f32;
-                    // Note: We can't send progress updates easily here since we're in a closure
-                    // For simplicity, we just wait for completion
-                    let _ = progress;
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    sender.send(UpdateStatus::Error(format!("Failed to create runtime: {}", e))).ok();
+                    return;
                 }
-            }));
+            };
+            let result = rt.block_on(download_update(&url, |_downloaded, _total| {}));
 
             let status = match result {
                 Ok(path) => UpdateStatus::Downloaded { file_path: path },
@@ -428,8 +428,6 @@ impl SoundpadGui {
             }
         }
     }
-
-    // ============= Playlist Methods =============
 
     /// Open a playlist (either "All Sounds", "Favourites", or a user-created playlist)
     pub fn open_playlist(&mut self, name: &str) {
@@ -741,8 +739,6 @@ impl SoundpadGui {
         }
     }
 
-    // ============= Sounds Folder Methods =============
-
     /// Import files into the sounds folder by copying them
     pub fn import_files(&mut self, files: Vec<PathBuf>) {
         let Some(sounds_folder) = self.config.sounds_folder.clone() else {
@@ -758,8 +754,8 @@ impl SoundpadGui {
             }
         }
 
-        let mut imported = 0;
-        let mut skipped = 0;
+        let mut _imported = 0;
+        let mut _skipped = 0;
 
         for file in &files {
             // Only process supported audio files
@@ -783,7 +779,7 @@ impl SoundpadGui {
 
                 if safe_filename.is_empty() || safe_filename.starts_with('.') {
                     eprintln!("Skipping file with invalid name: {}", file.display());
-                    skipped += 1;
+                    _skipped += 1;
                     continue;
                 }
 
@@ -801,25 +797,22 @@ impl SoundpadGui {
                             "Security: Skipping file that would escape sounds folder: {}",
                             final_dest.display()
                         );
-                        skipped += 1;
+                        _skipped += 1;
                         continue;
                     }
                 };
 
                 match std::fs::copy(file, &validated_dest) {
                     Ok(_) => {
-                        imported += 1;
-                        println!("Imported: {}", validated_dest.display());
-                    }
+                        _imported += 1;
+                        }
                     Err(e) => {
                         eprintln!("Failed to copy {}: {}", file.display(), e);
-                        skipped += 1;
+                        _skipped += 1;
                     }
                 }
             }
         }
-
-        println!("Import complete: {} imported, {} skipped", imported, skipped);
 
         // Refresh file list if viewing "All Sounds" playlist
         if self.app_state.current_playlist.as_deref() == Some("All Sounds") {

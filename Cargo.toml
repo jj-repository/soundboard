@@ -32,6 +32,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 global-hotkey = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 semver = "1.0"
+sha2 = "0.10"
 open = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -65,6 +66,9 @@ opt-level = "z"
 panic = "abort"
 
 [package.metadata.deb]
+maintainer = "arabian"
+extended-description = "PWSP (PipeWire SoundPad) lets you play audio files through your microphone. Includes a daemon, CLI client, and GUI client. Supports Linux (PipeWire) and Windows (VB-Audio Virtual Cable)."
+section = "sound"
 assets = [
     ["target/release/pwsp-daemon", "usr/bin/", "755"],
     ["target/release/pwsp-cli", "usr/bin/", "755"],

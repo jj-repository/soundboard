@@ -3,6 +3,8 @@ use crate::{
     utils::daemon::get_audio_player,
 };
 #[cfg(target_os = "linux")]
+use crate::VIRTUAL_MIC_NAME;
+#[cfg(target_os = "linux")]
 use crate::utils::pipewire::get_all_devices;
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -362,7 +364,7 @@ impl Executable for GetAllInputsCommand {
                 Ok((input_devices, _output_devices)) => {
                     let mut input_devices_strings = vec![];
                     for device in input_devices {
-                        if device.name == "pwsp-virtual-mic" {
+                        if device.name == VIRTUAL_MIC_NAME {
                             continue;
                         }
 
