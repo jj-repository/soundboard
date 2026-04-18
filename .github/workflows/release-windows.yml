@@ -2,7 +2,6 @@ name: Release Windows
 
 permissions:
   contents: write
-  packages: write
 
 on:
   release:
@@ -82,7 +81,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build all release binaries
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Package binaries into archive
         shell: bash
@@ -115,12 +114,11 @@ jobs:
         shell: bash
         run: sha256sum PWSP-Windows.zip > PWSP-Windows.zip.sha256
 
-      - name: Create Release
+      - name: Upload release assets
         run: |
-          gh release create "${{ steps.tag.outputs.tag }}" \
+          gh release upload "${{ steps.tag.outputs.tag }}" \
             PWSP-Windows.zip \
             PWSP-Windows.zip.sha256 \
-            --title "${{ steps.tag.outputs.tag }}" \
-            --generate-notes
+            --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

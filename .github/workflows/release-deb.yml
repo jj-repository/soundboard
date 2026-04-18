@@ -2,7 +2,6 @@ name: Release deb
 
 permissions:
   contents: write
-  packages: write
 
 on:
   release:
@@ -94,7 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build all release binaries
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Install cargo-deb and create .deb
         shell: bash
@@ -105,11 +104,10 @@ jobs:
 
           cargo-deb
 
-      - name: Create Release
+      - name: Upload release assets
         run: |
-          gh release create "${{ steps.tag.outputs.tag }}" \
+          gh release upload "${{ steps.tag.outputs.tag }}" \
             target/debian/*.deb \
-            --title "${{ steps.tag.outputs.tag }}" \
-            --generate-notes
+            --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

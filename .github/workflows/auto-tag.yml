@@ -19,11 +19,12 @@ jobs:
         id: v
         run: |
           SEMVER=$(grep -m1 '^version\s*=' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          MAJOR="${SEMVER%%.*}"
-          MINOR_RAW=$(echo "$SEMVER" | cut -d. -f2)
-          VERSION="${MAJOR}.$(printf '%02d' $MINOR_RAW)"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          git tag | grep -qx "v$VERSION" && echo "is_new=false" >> $GITHUB_OUTPUT || echo "is_new=true" >> $GITHUB_OUTPUT
+          if [[ ! "$SEMVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Cargo.toml version '$SEMVER' is not semver (X.Y.Z)"
+            exit 1
+          fi
+          echo "version=$SEMVER" >> $GITHUB_OUTPUT
+          git tag | grep -qx "v$SEMVER" && echo "is_new=false" >> $GITHUB_OUTPUT || echo "is_new=true" >> $GITHUB_OUTPUT
       - name: Create release
         if: steps.v.outputs.is_new == 'true'
         run: |

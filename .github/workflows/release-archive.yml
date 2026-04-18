@@ -2,7 +2,6 @@ name: Release archive
 
 permissions:
   contents: write
-  packages: write
 
 on:
   release:
@@ -113,8 +112,11 @@ jobs:
           echo "$BIN_NAMES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Run tests
+        run: cargo test --locked --release
+
       - name: Build all release binaries
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Package all binaries into one archive
         shell: bash
@@ -151,12 +153,11 @@ jobs:
       - name: Generate checksum
         run: sha256sum PWSP-Linux.zip > PWSP-Linux.zip.sha256
 
-      - name: Create Release
+      - name: Upload release assets
         run: |
-          gh release create "${{ steps.tag.outputs.tag }}" \
+          gh release upload "${{ steps.tag.outputs.tag }}" \
             PWSP-Linux.zip \
             PWSP-Linux.zip.sha256 \
-            --title "${{ steps.tag.outputs.tag }}" \
-            --generate-notes
+            --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
