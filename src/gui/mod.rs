@@ -95,6 +95,9 @@ struct SoundpadGui {
     /// Cache of path-exists results, refreshed periodically to avoid per-frame syscalls
     pub file_existence_cache: HashMap<PathBuf, bool>,
     pub file_existence_checked_at: Option<std::time::Instant>,
+    /// 500ms-TTL caches for per-frame Vec<String> rebuilds (tags + playlist order)
+    pub tags_cache: Option<(std::time::Instant, Vec<String>)>,
+    pub ordered_playlists_cache: Option<(std::time::Instant, Vec<String>)>,
 }
 
 impl SoundpadGui {
@@ -140,6 +143,8 @@ impl SoundpadGui {
             startup_update_checked: false,
             file_existence_cache: HashMap::new(),
             file_existence_checked_at: None,
+            tags_cache: None,
+            ordered_playlists_cache: None,
         }
     }
 
@@ -557,7 +562,15 @@ impl SoundpadGui {
     }
 
     /// Get playlists in their configured order
-    pub fn get_ordered_playlists(&self) -> Vec<String> {
+    pub fn get_ordered_playlists(&mut self) -> Vec<String> {
+        const TTL: std::time::Duration = std::time::Duration::from_millis(500);
+        let now = std::time::Instant::now();
+        if let Some((when, list)) = &self.ordered_playlists_cache {
+            if now.duration_since(*when) < TTL {
+                return list.clone();
+            }
+        }
+
         let mut ordered = Vec::new();
 
         // First, add playlists in the configured order
@@ -581,6 +594,7 @@ impl SoundpadGui {
         remaining.sort();
         ordered.extend(remaining);
 
+        self.ordered_playlists_cache = Some((now, ordered.clone()));
         ordered
     }
 
@@ -741,13 +755,22 @@ impl SoundpadGui {
         }
     }
 
-    pub fn get_all_tags(&self) -> Vec<String> {
+    pub fn get_all_tags(&mut self) -> Vec<String> {
+        const TTL: std::time::Duration = std::time::Duration::from_millis(500);
+        let now = std::time::Instant::now();
+        if let Some((when, list)) = &self.tags_cache {
+            if now.duration_since(*when) < TTL {
+                return list.clone();
+            }
+        }
+
         let mut all_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
         for metadata in self.config.sound_metadata.values() {
             all_tags.extend(metadata.tags.iter().cloned());
         }
         let mut tags: Vec<_> = all_tags.into_iter().collect();
         tags.sort();
+        self.tags_cache = Some((now, tags.clone()));
         tags
     }
 
