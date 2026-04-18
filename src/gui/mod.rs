@@ -26,6 +26,7 @@ use rfd::FileDialog;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
 use std::{
+    collections::HashMap,
     error::Error,
     sync::{Arc, Mutex},
     thread,
@@ -91,6 +92,9 @@ struct SoundpadGui {
     pub update_receiver: Option<mpsc::Receiver<UpdateStatus>>,
     /// Flag to track if startup update check has been performed
     pub startup_update_checked: bool,
+    /// Cache of path-exists results, refreshed periodically to avoid per-frame syscalls
+    pub file_existence_cache: HashMap<PathBuf, bool>,
+    pub file_existence_checked_at: Option<std::time::Instant>,
 }
 
 impl SoundpadGui {
@@ -134,7 +138,26 @@ impl SoundpadGui {
             hotkey_manager,
             update_receiver: None,
             startup_update_checked: false,
+            file_existence_cache: HashMap::new(),
+            file_existence_checked_at: None,
         }
+    }
+
+    /// Returns true if `path` exists, refreshing the cache at most once per second.
+    /// Avoids the per-row stat syscall in the 60fps draw loop.
+    pub fn path_exists_cached(&mut self, path: &Path) -> bool {
+        let now = std::time::Instant::now();
+        let stale = self
+            .file_existence_checked_at
+            .is_none_or(|t| now.duration_since(t) > std::time::Duration::from_secs(1));
+        if stale {
+            self.file_existence_cache.clear();
+            self.file_existence_checked_at = Some(now);
+        }
+        *self
+            .file_existence_cache
+            .entry(path.to_path_buf())
+            .or_insert_with(|| path.exists())
     }
 
     fn poll_tray_messages(&mut self, ctx: &Context) {
@@ -538,15 +561,21 @@ impl SoundpadGui {
         let mut ordered = Vec::new();
 
         // First, add playlists in the configured order
+        let ordered_set: std::collections::HashSet<&String> =
+            self.config.playlist_order.iter().collect();
         for name in &self.config.playlist_order {
             if self.config.categories.contains_key(name) {
                 ordered.push(name.clone());
             }
         }
 
-        // Then, add any playlists not in the order list (sorted alphabetically)
-        let mut remaining: Vec<_> = self.config.categories.keys()
-            .filter(|k| !self.config.playlist_order.contains(k))
+        // Then, add any playlists not in the order list (sorted alphabetically).
+        // O(1) contains check via set instead of O(n) Vec::contains.
+        let mut remaining: Vec<_> = self
+            .config
+            .categories
+            .keys()
+            .filter(|k| !ordered_set.contains(*k))
             .cloned()
             .collect();
         remaining.sort();

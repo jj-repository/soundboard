@@ -1658,13 +1658,14 @@ impl SoundpadGui {
             }
 
             // Show warning if file doesn't exist
-            if !entry_path.exists() {
+            let exists = self.path_exists_cached(entry_path);
+            if !exists {
                 file_button_text = file_button_text.color(Color32::DARK_RED).strikethrough();
             }
 
             let file_button = Button::new(file_button_text).frame(false);
             let file_button_response = ui.add(file_button);
-            if file_button_response.clicked() && entry_path.exists() {
+            if file_button_response.clicked() && exists {
                 self.play_file(entry_path);
                 self.app_state.selected_file = Some(entry_path.clone());
             }
@@ -1795,7 +1796,8 @@ impl SoundpadGui {
         }
 
         // Show warning if file doesn't exist
-        if !entry_path.exists() {
+        let exists = self.path_exists_cached(entry_path);
+        if !exists {
             file_label_text = file_label_text.color(Color32::DARK_RED).strikethrough();
         }
 
@@ -1803,7 +1805,7 @@ impl SoundpadGui {
         let file_response = ui.add(file_label);
 
         // Handle click to play
-        if file_response.clicked() && entry_path.exists() && !is_being_dragged {
+        if file_response.clicked() && exists && !is_being_dragged {
             self.play_file(entry_path);
             self.app_state.selected_file = Some(entry_path.clone());
         }
@@ -2012,13 +2014,14 @@ impl SoundpadGui {
             }
 
             // Show warning if file doesn't exist
-            if !entry_path.exists() {
+            let exists = self.path_exists_cached(entry_path);
+            if !exists {
                 file_button_text = file_button_text.color(Color32::DARK_RED).strikethrough();
             }
 
             let file_button = Button::new(file_button_text).frame(false);
             let file_button_response = ui.add(file_button);
-            if file_button_response.clicked() && entry_path.exists() {
+            if file_button_response.clicked() && exists {
                 self.play_file(entry_path);
                 self.app_state.selected_file = Some(entry_path.clone());
             }
