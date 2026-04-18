@@ -99,7 +99,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo install --locked cargo-deb@2
+          cargo install --locked 'cargo-deb@^2'
           export PATH="$HOME/.cargo/bin:$PATH"
 
           cargo-deb

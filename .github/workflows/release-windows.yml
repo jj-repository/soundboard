@@ -115,6 +115,7 @@ jobs:
         run: sha256sum PWSP-Windows.zip > PWSP-Windows.zip.sha256
 
       - name: Upload release assets
+        shell: bash
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
             PWSP-Windows.zip \
