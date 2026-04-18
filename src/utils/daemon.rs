@@ -143,10 +143,13 @@ pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
 }
 
 pub fn is_daemon_running() -> Result<bool, Box<dyn Error>> {
+    // The advisory lock is what tells us whether the daemon is alive; the lock
+    // file contents are irrelevant, so do not truncate and race the running
+    // daemon's open handle.
     let lock_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .open(get_runtime_dir().join("daemon.lock"))?;
     match lock_file.try_lock() {
         Ok(_) => Ok(false),

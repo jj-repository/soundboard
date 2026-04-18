@@ -19,7 +19,7 @@ use pwsp::utils::{
 use std::{error::Error, fs, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    time::sleep,
+    time::{sleep, timeout},
 };
 
 #[tokio::main]
@@ -119,14 +119,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// 10MB limit prevents DoS via excessive memory allocation
-const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+// Legitimate requests are a few hundred bytes; the old 10 MiB cap let a single
+// length prefix reserve 10 MiB per connection and sit on it forever.
+const MAX_IPC_MESSAGE_SIZE: usize = 64 * 1024;
+// Upper bound on how many args a single request may carry; parse_command
+// never reads more than a handful, so 32 is generous.
+const MAX_IPC_ARGS: usize = 32;
+// Whole-request deadline: guards against clients that write the length prefix
+// but then stall on the body.
+const IPC_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let mut len_bytes = [0u8; 4];
-    if stream.read_exact(&mut len_bytes).await.is_err() {
-        eprintln!("Failed to read message length from client!");
-        return;
+    match timeout(IPC_READ_TIMEOUT, stream.read_exact(&mut len_bytes)).await {
+        Err(_) => {
+            eprintln!("IPC: timed out reading message length");
+            return;
+        }
+        Ok(Err(_)) => {
+            eprintln!("Failed to read message length from client!");
+            return;
+        }
+        Ok(Ok(_)) => {}
     }
 
     let request_len = u32::from_le_bytes(len_bytes) as usize;
@@ -137,9 +151,16 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     }
 
     let mut buffer = vec![0u8; request_len];
-    if stream.read_exact(&mut buffer).await.is_err() {
-        eprintln!("Failed to read message from client!");
-        return;
+    match timeout(IPC_READ_TIMEOUT, stream.read_exact(&mut buffer)).await {
+        Err(_) => {
+            eprintln!("IPC: timed out reading message body");
+            return;
+        }
+        Ok(Err(_)) => {
+            eprintln!("Failed to read message from client!");
+            return;
+        }
+        Ok(Ok(_)) => {}
     }
 
     let request: Request = match serde_json::from_slice(&buffer) {
@@ -149,6 +170,16 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
             return;
         }
     };
+
+    if request.args.len() > MAX_IPC_ARGS {
+        eprintln!(
+            "Rejected request '{}': {} args exceeds limit of {}",
+            request.name,
+            request.args.len(),
+            MAX_IPC_ARGS
+        );
+        return;
+    }
 
     let command = parse_command(&request);
     let response: Response = match command {

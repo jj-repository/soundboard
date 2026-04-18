@@ -25,6 +25,19 @@ fn validate_audio_path(path_str: &str) -> Option<PathBuf> {
         Err(_) => return None, // File doesn't exist or permission denied
     };
 
+    // Security (Windows): reject NTFS Alternate Data Streams (foo.wav:evil.exe).
+    // `canonicalize` leaves ':' only in the drive-letter prefix (e.g. C:\),
+    // any colon beyond that is an ADS selector.
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        // Skip the drive letter colon (index 1), if present.
+        let tail_has_colon = s.char_indices().skip(2).any(|(_, c)| c == ':');
+        if tail_has_colon {
+            return None;
+        }
+    }
+
     // Verify it's a file, not a directory
     if !canonical.is_file() {
         return None;
