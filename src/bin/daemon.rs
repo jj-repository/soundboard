@@ -24,6 +24,7 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    pwsp::utils::logging::init();
     create_runtime_dir()?;
 
     if is_daemon_running()? {
@@ -36,7 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     create_virtual_mic()?;
 
     if let Err(e) = init_audio_player().await {
-        eprintln!("Failed to initialize audio player: {}", e);
+        tracing::error!("Failed to initialize audio player: {}", e);
         return Err(format!("Cannot start daemon: audio player initialization failed: {}", e).into());
     }
 
@@ -74,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
 
-        println!(
+        tracing::info!(
             "Daemon started. Listening on {}",
             socket_path.to_str().unwrap_or_default()
         );
@@ -87,13 +88,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         use pwsp::utils::daemon::DAEMON_TCP_PORT;
         let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
-        println!("Daemon started. Listening on {}", addr);
+        tracing::info!("Daemon started. Listening on {}", addr);
         listener
     };
 
     let commands_loop_handle = tokio::spawn(async move {
         if let Err(e) = commands_loop(listener).await {
-            eprintln!("Commands loop error: {}", e);
+            tracing::error!("Commands loop error: {}", e);
         }
     });
 
@@ -103,10 +104,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::select! {
         _ = commands_loop_handle => {
-            eprintln!("Commands loop was finished, stopping program...");
+            tracing::error!("Commands loop was finished, stopping program...");
         }
         _ = player_loop_handle => {
-            eprintln!("Audio Player loop was finished, stopping program...");
+            tracing::error!("Audio Player loop was finished, stopping program...");
         }
     }
 
@@ -133,11 +134,11 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let mut len_bytes = [0u8; 4];
     match timeout(IPC_READ_TIMEOUT, stream.read_exact(&mut len_bytes)).await {
         Err(_) => {
-            eprintln!("IPC: timed out reading message length");
+            tracing::error!("IPC: timed out reading message length");
             return;
         }
         Ok(Err(_)) => {
-            eprintln!("Failed to read message length from client!");
+            tracing::error!("Failed to read message length from client!");
             return;
         }
         Ok(Ok(_)) => {}
@@ -146,18 +147,18 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let request_len = u32::from_le_bytes(len_bytes) as usize;
 
     if request_len > MAX_IPC_MESSAGE_SIZE {
-        eprintln!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
+        tracing::error!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
         return;
     }
 
     let mut buffer = vec![0u8; request_len];
     match timeout(IPC_READ_TIMEOUT, stream.read_exact(&mut buffer)).await {
         Err(_) => {
-            eprintln!("IPC: timed out reading message body");
+            tracing::error!("IPC: timed out reading message body");
             return;
         }
         Ok(Err(_)) => {
-            eprintln!("Failed to read message from client!");
+            tracing::error!("Failed to read message from client!");
             return;
         }
         Ok(Ok(_)) => {}
@@ -166,13 +167,13 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let request: Request = match serde_json::from_slice(&buffer) {
         Ok(req) => req,
         Err(e) => {
-            eprintln!("Failed to parse request JSON: {}", e);
+            tracing::error!("Failed to parse request JSON: {}", e);
             return;
         }
     };
 
     if request.args.len() > MAX_IPC_ARGS {
-        eprintln!(
+        tracing::error!(
             "Rejected request '{}': {} args exceeds limit of {}",
             request.name,
             request.args.len(),
@@ -190,18 +191,18 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let response_data = match serde_json::to_vec(&response) {
         Ok(data) => data,
         Err(e) => {
-            eprintln!("Failed to serialize response: {}", e);
+            tracing::error!("Failed to serialize response: {}", e);
             return;
         }
     };
     let response_len = response_data.len() as u32;
 
     if stream.write_all(&response_len.to_le_bytes()).await.is_err() {
-        eprintln!("Failed to write response length to client!");
+        tracing::error!("Failed to write response length to client!");
         return;
     }
     if stream.write_all(&response_data).await.is_err() {
-        eprintln!("Failed to write response to client!");
+        tracing::error!("Failed to write response to client!");
     }
 }
 
@@ -228,7 +229,7 @@ async fn player_loop() {
         if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {
             if let Some(ref file_path) = audio_player.current_file_path.clone() {
                 if let Err(e) = audio_player.play(file_path).await {
-                    eprintln!("Failed to play looped file: {}", e);
+                    tracing::error!("Failed to play looped file: {}", e);
                 }
             }
         }

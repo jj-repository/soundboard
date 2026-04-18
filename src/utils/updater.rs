@@ -242,7 +242,7 @@ pub async fn download_update(
             }
         }
         Ok(sha_response) if sha_response.status() == reqwest::StatusCode::NOT_FOUND && allow_skip => {
-            eprintln!(
+            tracing::error!(
                 "WARNING: SHA-256 sidecar missing for update. Skipping verification because \
                  PWSP_UPDATE_SKIP_CHECKSUM=1 was set."
             );

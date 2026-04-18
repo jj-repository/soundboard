@@ -17,7 +17,7 @@ pub trait MutexExt<T> {
 impl<T> MutexExt<T> for Mutex<T> {
     fn lock_or_recover(&self) -> MutexGuard<'_, T> {
         self.lock().unwrap_or_else(|poisoned| {
-            eprintln!("Warning: Mutex was poisoned, recovering...");
+            tracing::error!("Warning: Mutex was poisoned, recovering...");
             poisoned.into_inner()
         })
     }

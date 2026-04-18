@@ -101,7 +101,7 @@ pub fn start_tray() -> Option<TrayHandle> {
                 let _ = stop_receiver.recv();
             }
             Err(e) => {
-                eprintln!("Failed to create system tray: {}", e);
+                tracing::error!("Failed to create system tray: {}", e);
             }
         }
     });
@@ -159,7 +159,7 @@ pub fn start_tray() -> Option<TrayHandle> {
         let _tray_icon = match builder.build() {
             Ok(tray) => tray,
             Err(e) => {
-                eprintln!("Failed to create system tray: {}", e);
+                tracing::error!("Failed to create system tray: {}", e);
                 return;
             }
         };

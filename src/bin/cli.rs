@@ -95,6 +95,7 @@ enum SetCommands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    pwsp::utils::logging::init();
     let cli = Cli::parse();
 
     wait_for_daemon().await?;

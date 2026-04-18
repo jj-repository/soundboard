@@ -52,7 +52,7 @@ pub fn try_get_audio_player() -> Option<&'static Mutex<AudioPlayer>> {
 
 pub fn get_daemon_config() -> DaemonConfig {
     DaemonConfig::load_from_file().unwrap_or_else(|e| {
-        eprintln!("Failed to load daemon config ({}), using defaults", e);
+        tracing::error!("Failed to load daemon config ({}), using defaults", e);
         let config = DaemonConfig::default();
         config.save_to_file().ok();
         config
@@ -69,7 +69,7 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
     {
         Some(device) => device,
         None => {
-            eprintln!("Could not find pwsp-daemon output device, skipping device linking");
+            tracing::error!("Could not find pwsp-daemon output device, skipping device linking");
             return Ok(());
         }
     };
@@ -80,7 +80,7 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
     {
         Some(device) => device,
         None => {
-            eprintln!("Could not find pwsp-daemon input device, skipping device linking");
+            tracing::error!("Could not find pwsp-daemon input device, skipping device linking");
             return Ok(());
         }
     };
@@ -100,7 +100,7 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
             )?;
         }
         (out_fl, out_fr, in_fl, in_fr) => {
-            eprintln!(
+            tracing::error!(
                 "Required ports not available (output_fl: {}, output_fr: {}, input_fl: {}, input_fr: {}), skipping device linking",
                 out_fl.is_some(),
                 out_fr.is_some(),

@@ -34,6 +34,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 semver = "1.0"
 sha2 = "0.10"
 open = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = "0.9.2"

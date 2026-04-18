@@ -207,7 +207,7 @@ impl AudioPlayer {
                 match Self::create_stream_for_device(output_name) {
                     Ok(stream) => (stream, Some(output_name.clone())),
                     Err(_) => {
-                        eprintln!(
+                        tracing::error!(
                             "Failed to use output device '{}', falling back to default",
                             output_name
                         );
@@ -305,7 +305,7 @@ impl AudioPlayer {
         #[cfg(target_os = "windows")]
         if audio_player.current_input_device.is_some() {
             if let Err(e) = audio_player.start_mic_passthrough() {
-                eprintln!("Failed to start mic passthrough: {}", e);
+                tracing::error!("Failed to start mic passthrough: {}", e);
             }
             audio_player.apply_mic_gain();
         }
@@ -338,7 +338,7 @@ impl AudioPlayer {
                     let name = desc.name().to_string();
                     let lower = name.to_lowercase();
                     if lower.contains("cable input") || lower.contains("vb-audio") {
-                        println!("Auto-detected VB-Audio Virtual Cable: {}", name);
+                        tracing::info!("Auto-detected VB-Audio Virtual Cable: {}", name);
                         return Some(name);
                     }
                 }
@@ -359,7 +359,7 @@ impl AudioPlayer {
     fn abort_link_thread(&mut self) {
         if let Some(sender) = &self.input_link_sender {
             if sender.send(Terminate {}).is_err() {
-                eprintln!("Failed to send terminate signal to link thread");
+                tracing::error!("Failed to send terminate signal to link thread");
             }
         }
     }
@@ -371,7 +371,7 @@ impl AudioPlayer {
         let current_input_name = match &self.current_input_device {
             Some(device) => device.name.clone(),
             None => {
-                println!("No input device selected, skipping device linking");
+                tracing::info!("No input device selected, skipping device linking");
                 return Ok(());
             }
         };
@@ -396,7 +396,7 @@ impl AudioPlayer {
                 Some(device) => device,
                 None => {
                     if attempt == MAX_RETRIES {
-                        println!("Could not find pwsp-virtual-mic after {} attempts, skipping device linking", MAX_RETRIES);
+                        tracing::info!("Could not find pwsp-virtual-mic after {} attempts, skipping device linking", MAX_RETRIES);
                         return Ok(());
                     }
                     tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
@@ -413,7 +413,7 @@ impl AudioPlayer {
                 Some(device) => device,
                 None => {
                     if attempt == MAX_RETRIES {
-                        println!("Could not find input device '{}' after {} attempts, skipping device linking", current_input_name, MAX_RETRIES);
+                        tracing::info!("Could not find input device '{}' after {} attempts, skipping device linking", current_input_name, MAX_RETRIES);
                         return Ok(());
                     }
                     tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
@@ -440,7 +440,7 @@ impl AudioPlayer {
                 }
                 (out_fl, out_fr, in_fl, in_fr) => {
                     if attempt == MAX_RETRIES {
-                        println!(
+                        tracing::info!(
                             "Ports not available after {} attempts (output_fl: {}, output_fr: {}, input_fl: {}, input_fr: {}), skipping device linking",
                             MAX_RETRIES,
                             out_fl.is_some(),
@@ -530,14 +530,14 @@ impl AudioPlayer {
             {
                 Ok(output) => {
                     if !output.status.success() {
-                        eprintln!(
+                        tracing::error!(
                             "wpctl set-volume failed: {}",
                             String::from_utf8_lossy(&output.stderr)
                         );
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to execute wpctl: {}", e);
+                    tracing::error!("Failed to execute wpctl: {}", e);
                 }
             }
         }
@@ -748,7 +748,7 @@ impl AudioPlayer {
                             producer.push_overwrite(s);
                         }
                     },
-                    |err| eprintln!("Mic input error: {}", err),
+                    |err| tracing::error!("Mic input error: {}", err),
                     None,
                 ),
                 cpal::SampleFormat::I16 => device.build_input_stream(
@@ -758,11 +758,11 @@ impl AudioPlayer {
                             producer.push_overwrite(s as f32 / 32768.0);
                         }
                     },
-                    |err| eprintln!("Mic input error: {}", err),
+                    |err| tracing::error!("Mic input error: {}", err),
                     None,
                 ),
                 format => {
-                    eprintln!("Unsupported mic sample format: {:?}", format);
+                    tracing::error!("Unsupported mic sample format: {:?}", format);
                     return;
                 }
             };
@@ -770,7 +770,7 @@ impl AudioPlayer {
             match stream_result {
                 Ok(stream) => {
                     if let Err(e) = stream.play() {
-                        eprintln!("Failed to start mic stream: {}", e);
+                        tracing::error!("Failed to start mic stream: {}", e);
                         return;
                     }
                     // Keep stream alive until stop signal
@@ -778,7 +778,7 @@ impl AudioPlayer {
                     drop(stream);
                 }
                 Err(e) => {
-                    eprintln!("Failed to build mic input stream: {}", e);
+                    tracing::error!("Failed to build mic input stream: {}", e);
                 }
             }
         });
@@ -794,7 +794,7 @@ impl AudioPlayer {
         self.mic_sink.play();
 
         self.mic_stop_sender = Some(stop_tx);
-        println!("Mic passthrough started: {}", device_name);
+        tracing::info!("Mic passthrough started: {}", device_name);
         Ok(())
     }
 

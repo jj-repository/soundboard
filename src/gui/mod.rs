@@ -320,7 +320,7 @@ impl SoundpadGui {
         self.app_state.files = match path.read_dir() {
             Ok(entries) => entries.filter_map(|res| res.ok()).map(|e| e.path()).collect(),
             Err(e) => {
-                eprintln!("Failed to read directory {}: {}", path.display(), e);
+                tracing::error!("Failed to read directory {}: {}", path.display(), e);
                 Default::default()
             }
         };
@@ -338,20 +338,20 @@ impl SoundpadGui {
 
         if let Some(path_str) = path.to_str() {
             if let Err(e) = make_request_sync(Request::play(path_str)) {
-                eprintln!("Failed to send play request: {}", e);
+                tracing::error!("Failed to send play request: {}", e);
             }
         } else {
-            eprintln!("Invalid file path encoding");
+            tracing::error!("Invalid file path encoding");
         }
     }
 
     pub fn preview_file(&mut self, path: &Path) {
         if let Some(path_str) = path.to_str() {
             if let Err(e) = make_request_sync(Request::preview(path_str)) {
-                eprintln!("Failed to send preview request: {}", e);
+                tracing::error!("Failed to send preview request: {}", e);
             }
         } else {
-            eprintln!("Invalid file path encoding");
+            tracing::error!("Invalid file path encoding");
         }
     }
 
@@ -362,7 +362,7 @@ impl SoundpadGui {
             let mut daemon_config = get_daemon_config();
             daemon_config.default_input_name = Some(name);
             if let Err(e) = daemon_config.save_to_file() {
-                eprintln!("Failed to save daemon config: {}", e);
+                tracing::error!("Failed to save daemon config: {}", e);
             }
         }
     }
@@ -374,7 +374,7 @@ impl SoundpadGui {
         let mut daemon_config = get_daemon_config();
         daemon_config.default_output_name = Some(name);
         if let Err(e) = daemon_config.save_to_file() {
-            eprintln!("Failed to save daemon config: {}", e);
+            tracing::error!("Failed to save daemon config: {}", e);
         }
     }
 
@@ -397,13 +397,13 @@ impl SoundpadGui {
 
     pub fn stop_layer(&mut self, layer_index: usize) {
         if let Err(e) = make_request_sync(Request::stop_layer(layer_index)) {
-            eprintln!("Failed to stop layer {}: {}", layer_index, e);
+            tracing::error!("Failed to stop layer {}: {}", layer_index, e);
         }
     }
 
     pub fn stop_all_layers(&mut self) {
         if let Err(e) = make_request_sync(Request::stop_all_layers()) {
-            eprintln!("Failed to stop all layers: {}", e);
+            tracing::error!("Failed to stop all layers: {}", e);
         }
     }
 
@@ -425,7 +425,7 @@ impl SoundpadGui {
             }
         }
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -443,7 +443,7 @@ impl SoundpadGui {
         if let Some(category) = self.config.categories.get_mut(category_name) {
             category.add_sound(path.to_path_buf());
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -452,7 +452,7 @@ impl SoundpadGui {
         if let Some(category) = self.config.categories.get_mut(category_name) {
             category.remove_sound(path);
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -521,7 +521,7 @@ impl SoundpadGui {
             // Add to playlist order
             self.config.playlist_order.push(name.to_string());
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -537,7 +537,7 @@ impl SoundpadGui {
             self.invalidate_files_cache();
         }
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -555,7 +555,7 @@ impl SoundpadGui {
                     self.config.playlist_order[pos] = new_name.to_string();
                 }
                 if let Err(e) = self.config.save_to_file() {
-                    eprintln!("Failed to save config: {}", e);
+                    tracing::error!("Failed to save config: {}", e);
                 }
             }
         }
@@ -610,7 +610,7 @@ impl SoundpadGui {
         let playlist = self.config.playlist_order.remove(from_index);
         self.config.playlist_order.insert(to_index, playlist);
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -635,7 +635,7 @@ impl SoundpadGui {
         if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
             playlist.add_sound(path.to_path_buf());
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -652,7 +652,7 @@ impl SoundpadGui {
             let sound = playlist.sounds.remove(from_index);
             playlist.sounds.insert(to_index, sound);
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -669,7 +669,7 @@ impl SoundpadGui {
             if let Some(playlist) = self.config.categories.get_mut(playlist_name) {
                 playlist.remove_sound(path);
                 if let Err(e) = self.config.save_to_file() {
-                    eprintln!("Failed to save config: {}", e);
+                    tracing::error!("Failed to save config: {}", e);
                 }
             }
         }
@@ -683,14 +683,14 @@ impl SoundpadGui {
     pub fn delete_sound_file(&mut self, path: &PathBuf) {
         // Security: Validate the path is within the sounds folder
         let Some(ref sounds_folder) = self.config.sounds_folder else {
-            eprintln!("Cannot delete file: sounds folder not configured");
+            tracing::error!("Cannot delete file: sounds folder not configured");
             return;
         };
 
         let validated_path = match validate_path_within(path, sounds_folder) {
             Some(p) => p,
             None => {
-                eprintln!(
+                tracing::error!(
                     "Security: Refusing to delete file outside sounds folder: {}",
                     path.display()
                 );
@@ -700,7 +700,7 @@ impl SoundpadGui {
 
         // Delete the file
         if let Err(e) = std::fs::remove_file(&validated_path) {
-            eprintln!("Failed to delete file {}: {}", validated_path.display(), e);
+            tracing::error!("Failed to delete file {}: {}", validated_path.display(), e);
             return;
         }
 
@@ -716,7 +716,7 @@ impl SoundpadGui {
         self.config.sound_metadata.remove(path);
 
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
 
         // Remove from current files view
@@ -731,7 +731,7 @@ impl SoundpadGui {
             self.config.sound_metadata.remove(path);
         }
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -739,7 +739,7 @@ impl SoundpadGui {
         let metadata = self.config.sound_metadata.entry(path.to_path_buf()).or_default();
         metadata.add_tag(tag);
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -750,7 +750,7 @@ impl SoundpadGui {
                 self.config.sound_metadata.remove(path);
             }
             if let Err(e) = self.config.save_to_file() {
-                eprintln!("Failed to save config: {}", e);
+                tracing::error!("Failed to save config: {}", e);
             }
         }
     }
@@ -787,21 +787,21 @@ impl SoundpadGui {
             self.config.sound_metadata.remove(path);
         }
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
     /// Import files into the sounds folder by copying them
     pub fn import_files(&mut self, files: Vec<PathBuf>) {
         let Some(sounds_folder) = self.config.sounds_folder.clone() else {
-            eprintln!("Sounds folder not configured");
+            tracing::error!("Sounds folder not configured");
             return;
         };
 
         // Ensure directory exists
         if !sounds_folder.exists() {
             if let Err(e) = std::fs::create_dir_all(&sounds_folder) {
-                eprintln!("Failed to create sounds folder: {}", e);
+                tracing::error!("Failed to create sounds folder: {}", e);
                 return;
             }
         }
@@ -830,7 +830,7 @@ impl SoundpadGui {
                     .collect();
 
                 if safe_filename.is_empty() || safe_filename.starts_with('.') {
-                    eprintln!("Skipping file with invalid name: {}", file.display());
+                    tracing::error!("Skipping file with invalid name: {}", file.display());
                     skipped += 1;
                     continue;
                 }
@@ -845,7 +845,7 @@ impl SoundpadGui {
                 let validated_dest = match validate_path_within(&final_dest, &sounds_folder) {
                     Some(p) => p,
                     None => {
-                        eprintln!(
+                        tracing::error!(
                             "Security: Skipping file that would escape sounds folder: {}",
                             final_dest.display()
                         );
@@ -859,14 +859,14 @@ impl SoundpadGui {
                         imported += 1;
                     }
                     Err(e) => {
-                        eprintln!("Failed to copy {}: {}", file.display(), e);
+                        tracing::error!("Failed to copy {}: {}", file.display(), e);
                         skipped += 1;
                     }
                 }
             }
         }
 
-        eprintln!("Import complete: {} imported, {} skipped", imported, skipped);
+        tracing::error!("Import complete: {} imported, {} skipped", imported, skipped);
 
         // Refresh file list if viewing "All Sounds" playlist
         if self.app_state.current_playlist.as_deref() == Some("All Sounds") {
@@ -942,7 +942,7 @@ impl SoundpadGui {
 
         self.config.sounds_folder = Some(path.clone());
         if let Err(e) = self.config.save_to_file() {
-            eprintln!("Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
         }
 
         // Open the "All Sounds" playlist

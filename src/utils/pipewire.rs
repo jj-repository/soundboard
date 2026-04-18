@@ -123,7 +123,7 @@ async fn pw_get_global_objects_thread(
     let main_loop = match MainLoopRc::new(None) {
         Ok(ml) => ml,
         Err(e) => {
-            eprintln!("Failed to initialize pipewire main loop: {}", e);
+            tracing::error!("Failed to initialize pipewire main loop: {}", e);
             return;
         }
     };
@@ -136,21 +136,21 @@ async fn pw_get_global_objects_thread(
     let context = match ContextRc::new(&main_loop, None) {
         Ok(ctx) => ctx,
         Err(e) => {
-            eprintln!("Failed to create pipewire context: {}", e);
+            tracing::error!("Failed to create pipewire context: {}", e);
             return;
         }
     };
     let core = match context.connect(None) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Failed to connect to pipewire context: {}", e);
+            tracing::error!("Failed to connect to pipewire context: {}", e);
             return;
         }
     };
     let registry = match core.get_registry() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to get registry from pipewire context: {}", e);
+            tracing::error!("Failed to get registry from pipewire context: {}", e);
             return;
         }
     };
@@ -270,21 +270,21 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
         let main_loop = match MainLoopRc::new(None) {
             Ok(ml) => ml,
             Err(e) => {
-                eprintln!("Failed to initialize pipewire main loop: {}", e);
+                tracing::error!("Failed to initialize pipewire main loop: {}", e);
                 return;
             }
         };
         let context = match ContextRc::new(&main_loop, None) {
             Ok(ctx) => ctx,
             Err(e) => {
-                eprintln!("Failed to create pipewire context: {}", e);
+                tracing::error!("Failed to create pipewire context: {}", e);
                 return;
             }
         };
         let core = match context.connect(None) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to connect to pipewire context: {}", e);
+                tracing::error!("Failed to connect to pipewire context: {}", e);
                 return;
             }
         };
@@ -302,7 +302,7 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
         let _node = match core.create_object::<pipewire::node::Node>("adapter", &props) {
             Ok(node) => node,
             Err(e) => {
-                eprintln!("Failed to create virtual mic: {}", e);
+                tracing::error!("Failed to create virtual mic: {}", e);
                 return;
             }
         };
@@ -332,21 +332,21 @@ pub fn create_link(
         let main_loop = match MainLoopRc::new(None) {
             Ok(ml) => ml,
             Err(e) => {
-                eprintln!("Failed to initialize pipewire main loop: {}", e);
+                tracing::error!("Failed to initialize pipewire main loop: {}", e);
                 return;
             }
         };
         let context = match ContextRc::new(&main_loop, None) {
             Ok(ctx) => ctx,
             Err(e) => {
-                eprintln!("Failed to create pipewire context: {}", e);
+                tracing::error!("Failed to create pipewire context: {}", e);
                 return;
             }
         };
         let core = match context.connect(None) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to connect to pipewire context: {}", e);
+                tracing::error!("Failed to connect to pipewire context: {}", e);
                 return;
             }
         };
@@ -367,14 +367,14 @@ pub fn create_link(
         let _link_fl = match core.create_object::<Link>("link-factory", &props_fl) {
             Ok(link) => link,
             Err(e) => {
-                eprintln!("Failed to create link FL: {}", e);
+                tracing::error!("Failed to create link FL: {}", e);
                 return;
             }
         };
         let _link_fr = match core.create_object::<Link>("link-factory", &props_fr) {
             Ok(link) => link,
             Err(e) => {
-                eprintln!("Failed to create link FR: {}", e);
+                tracing::error!("Failed to create link FR: {}", e);
                 return;
             }
         };

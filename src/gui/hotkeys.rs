@@ -31,7 +31,7 @@ impl HotkeyManager {
         let manager = match GlobalHotKeyManager::new() {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Failed to create hotkey manager: {}", e);
+                tracing::error!("Failed to create hotkey manager: {}", e);
                 return None;
             }
         };
@@ -65,7 +65,7 @@ impl HotkeyManager {
                         let ids = match ids_clone.read() {
                             Ok(guard) => guard,
                             Err(poisoned) => {
-                                eprintln!("Warning: Hotkey IDs lock was poisoned, recovering...");
+                                tracing::error!("Warning: Hotkey IDs lock was poisoned, recovering...");
                                 poisoned.into_inner()
                             }
                         };
@@ -86,7 +86,7 @@ impl HotkeyManager {
         let mut ids = match self.ids.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("Warning: Hotkey IDs lock was poisoned during register, recovering...");
+                tracing::error!("Warning: Hotkey IDs lock was poisoned during register, recovering...");
                 poisoned.into_inner()
             }
         };
@@ -97,7 +97,7 @@ impl HotkeyManager {
                 ids.play_pause_id = Some(hotkey.id());
                 self.play_pause_binding = Some(binding.clone());
                 if let Err(e) = self.manager.register(hotkey) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to register Play/Pause hotkey ({}): {}",
                         binding.display(),
                         e
@@ -114,7 +114,7 @@ impl HotkeyManager {
                 ids.stop_id = Some(hotkey.id());
                 self.stop_binding = Some(binding.clone());
                 if let Err(e) = self.manager.register(hotkey) {
-                    eprintln!(
+                    tracing::error!(
                         "Failed to register Stop hotkey ({}): {}",
                         binding.display(),
                         e
@@ -130,7 +130,7 @@ impl HotkeyManager {
         let mut ids = match self.ids.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                eprintln!("Warning: Hotkey IDs lock was poisoned during unregister, recovering...");
+                tracing::error!("Warning: Hotkey IDs lock was poisoned during unregister, recovering...");
                 poisoned.into_inner()
             }
         };

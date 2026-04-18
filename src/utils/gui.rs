@@ -174,12 +174,12 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             // Log errors only when they change (avoid spam)
             if let Some(ref err) = first_error {
                 if last_error_logged.as_ref() != Some(err) {
-                    eprintln!("Daemon communication error ({} requests failed): {}", error_count, err);
+                    tracing::error!("Daemon communication error ({} requests failed): {}", error_count, err);
                     last_error_logged = Some(err.clone());
                 }
             } else if last_error_logged.is_some() {
                 // Connection restored
-                eprintln!("Daemon connection restored");
+                tracing::error!("Daemon connection restored");
                 last_error_logged = None;
             }
 
