@@ -104,10 +104,20 @@ jobs:
 
           cargo-deb
 
+      - name: Generate checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target/debian
+          for f in *.deb; do
+            sha256sum "$f" > "$f.sha256"
+          done
+
       - name: Upload release assets
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
             target/debian/*.deb \
+            target/debian/*.deb.sha256 \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
