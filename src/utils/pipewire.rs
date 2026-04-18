@@ -231,8 +231,8 @@ async fn enumerate_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
                 let mut output_devices: Vec<AudioDevice> =
                     output_devices.values().cloned().collect();
 
-                input_devices.sort_by(|a, b| a.id.cmp(&b.id));
-                output_devices.sort_by(|a, b| a.id.cmp(&b.id));
+                input_devices.sort_by_key(|a| a.id);
+                output_devices.sort_by_key(|a| a.id);
 
                 return Ok((input_devices, output_devices));
             }

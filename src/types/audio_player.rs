@@ -128,8 +128,8 @@ type MicConsumer = <HeapRb<f32> as Split>::Cons;
 #[cfg(target_os = "windows")]
 struct MicSource {
     consumer: MicConsumer,
-    sample_rate: u32,
-    channels: u16,
+    sample_rate: std::num::NonZero<u32>,
+    channels: std::num::NonZero<u16>,
 }
 
 #[cfg(target_os = "windows")]
@@ -144,8 +144,8 @@ impl Iterator for MicSource {
 #[cfg(target_os = "windows")]
 impl Source for MicSource {
     fn current_span_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> u16 { self.channels }
-    fn sample_rate(&self) -> u32 { self.sample_rate }
+    fn channels(&self) -> std::num::NonZero<u16> { self.channels }
+    fn sample_rate(&self) -> std::num::NonZero<u32> { self.sample_rate }
     fn total_duration(&self) -> Option<Duration> { None }
 }
 
@@ -722,15 +722,20 @@ impl AudioPlayer {
             .ok_or_else(|| format!("Input device '{}' not found", device_name))?;
 
         let supported_config = device.default_input_config()?;
-        let sample_rate = supported_config.sample_rate().0;
-        let channels = supported_config.channels();
+        let sample_rate_hz: u32 = supported_config.sample_rate();
+        let sample_rate_nz = std::num::NonZero::<u32>::new(sample_rate_hz)
+            .ok_or("Input device reported a sample rate of 0")?;
+        let channels: u16 = supported_config.channels();
+        let channels_nz = std::num::NonZero::<u16>::new(channels)
+            .ok_or("Input device reported a channel count of 0")?;
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
 
-        // Ring capacity = ~500ms of audio. Oldest samples are overwritten on
-        // overflow (push_overwrite), which matches the previous
-        // "drop oldest when full" policy without any lock.
-        let max_samples = (sample_rate as usize * channels as usize) / 2;
+        // Ring capacity = ~500ms of audio. On overflow we drop the newest
+        // sample (ringbuf 0.4 has no producer-side overwrite); the 500ms
+        // head-room means overflow only happens if the consumer is already
+        // far behind, in which case the behavior doesn't much matter.
+        let max_samples = (sample_rate_hz as usize * channels as usize) / 2;
         let ring = HeapRb::<f32>::new(max_samples.max(1));
         let (mut producer, consumer) = ring.split();
 
@@ -743,9 +748,8 @@ impl AudioPlayer {
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         for &s in data {
-                            // push_overwrite drops the oldest sample when
-                            // full — no allocation, no lock, RT-safe.
-                            producer.push_overwrite(s);
+                            // RT-safe: no allocation, no lock. Drops on full ring.
+                            let _ = producer.try_push(s);
                         }
                     },
                     |err| tracing::error!("Mic input error: {}", err),
@@ -755,7 +759,7 @@ impl AudioPlayer {
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         for &s in data {
-                            producer.push_overwrite(s as f32 / 32768.0);
+                            let _ = producer.try_push(s as f32 / 32768.0);
                         }
                     },
                     |err| tracing::error!("Mic input error: {}", err),
@@ -786,8 +790,8 @@ impl AudioPlayer {
         // Connect MicSource to the mic sink on the output mixer
         let mic_source = MicSource {
             consumer,
-            sample_rate,
-            channels,
+            sample_rate: sample_rate_nz,
+            channels: channels_nz,
         };
         self.mic_sink.stop();
         self.mic_sink.append(mic_source);
