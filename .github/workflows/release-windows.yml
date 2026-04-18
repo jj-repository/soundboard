@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          ARCHIVE_NAME="PWSP-Windows.zip"
+          ARCHIVE_NAME="soundboard.zip"
 
           BIN_NAMES=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[0].targets[] | select(.kind[] | contains("bin")) | .name' \
@@ -112,14 +112,14 @@ jobs:
 
       - name: Generate checksum
         shell: bash
-        run: sha256sum PWSP-Windows.zip > PWSP-Windows.zip.sha256
+        run: sha256sum soundboard.zip > soundboard.zip.sha256
 
       - name: Upload release assets
         shell: bash
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
-            PWSP-Windows.zip \
-            PWSP-Windows.zip.sha256 \
+            soundboard.zip \
+            soundboard.zip.sha256 \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,9 +2,9 @@ pub mod types;
 pub mod utils;
 
 /// PipeWire node name for the virtual microphone
-pub const VIRTUAL_MIC_NAME: &str = "pwsp-virtual-mic";
+pub const VIRTUAL_MIC_NAME: &str = "soundboard-virtual-mic";
 /// PipeWire node name for the daemon's audio output
-pub const DAEMON_OUTPUT_NAME: &str = "alsa_playback.pwsp-daemon";
+pub const DAEMON_OUTPUT_NAME: &str = "alsa_playback.soundboard-daemon";
 
 use std::sync::{Mutex, MutexGuard};
 

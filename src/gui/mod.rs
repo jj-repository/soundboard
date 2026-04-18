@@ -8,7 +8,7 @@ use crate::gui::hotkeys::{HotkeyAction, HotkeyManager};
 use crate::gui::tray::{TrayHandle, TrayMessage, start_tray};
 use eframe::{HardwareAcceleration, NativeOptions, icon_data::from_png_bytes, run_native};
 use egui::{Context, Vec2, ViewportBuilder};
-use pwsp::{
+use soundboard::{
     MutexExt,
     types::{
         audio_player::PlayerState,
@@ -516,7 +516,7 @@ impl SoundpadGui {
     /// Create a new playlist
     pub fn create_playlist(&mut self, name: &str) {
         if !name.is_empty() && name != "All Sounds" && name != "Favourites" && !self.config.categories.contains_key(name) {
-            use pwsp::types::config::SoundCategory;
+            use soundboard::types::config::SoundCategory;
             self.config.categories.insert(name.to_string(), SoundCategory::new(name));
             // Add to playlist order
             self.config.playlist_order.push(name.to_string());
@@ -968,6 +968,13 @@ impl SoundpadGui {
 }
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
+    // Best-effort: start the daemon if the user launched the GUI directly.
+    // Failure here is non-fatal — the state-sync loop already waits for a
+    // live daemon and the user may have their own daemon setup.
+    if let Err(e) = soundboard::utils::daemon::spawn_daemon_if_not_running() {
+        tracing::warn!("Could not auto-spawn soundboard-daemon: {e}");
+    }
+
     const ICON: &[u8] = include_bytes!("../../assets/icon.png");
 
     let options = NativeOptions {
@@ -982,7 +989,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
                 .with_icon(from_png_bytes(ICON)?);
 
             #[cfg(target_os = "linux")]
-            let builder = builder.with_app_id("ru.arabianq.pwsp");
+            let builder = builder.with_app_id("dev.jjr.soundboard");
 
             builder
         },

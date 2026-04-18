@@ -63,33 +63,33 @@ pub fn get_daemon_config() -> DaemonConfig {
 pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
     let (input_devices, output_devices) = get_all_devices().await?;
 
-    let pwsp_daemon_output = match output_devices
+    let soundboard_daemon_output = match output_devices
         .into_iter()
         .find(|d| d.name == DAEMON_OUTPUT_NAME)
     {
         Some(device) => device,
         None => {
-            tracing::error!("Could not find pwsp-daemon output device, skipping device linking");
+            tracing::error!("Could not find soundboard-daemon output device, skipping device linking");
             return Ok(());
         }
     };
 
-    let pwsp_daemon_input = match input_devices
+    let soundboard_daemon_input = match input_devices
         .into_iter()
         .find(|d| d.name == VIRTUAL_MIC_NAME)
     {
         Some(device) => device,
         None => {
-            tracing::error!("Could not find pwsp-daemon input device, skipping device linking");
+            tracing::error!("Could not find soundboard-daemon input device, skipping device linking");
             return Ok(());
         }
     };
 
     match (
-        &pwsp_daemon_output.output_fl,
-        &pwsp_daemon_output.output_fr,
-        &pwsp_daemon_input.input_fl,
-        &pwsp_daemon_input.input_fr,
+        &soundboard_daemon_output.output_fl,
+        &soundboard_daemon_output.output_fr,
+        &soundboard_daemon_input.input_fl,
+        &soundboard_daemon_input.input_fr,
     ) {
         (Some(output_fl), Some(output_fr), Some(input_fl), Some(input_fr)) => {
             create_link(
@@ -116,13 +116,13 @@ pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
 pub fn get_runtime_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        dirs::runtime_dir().unwrap_or(PathBuf::from("/run/pwsp"))
+        dirs::runtime_dir().unwrap_or(PathBuf::from("/run/soundboard"))
     }
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            .join("pwsp")
+            .join("soundboard")
             .join("run")
     }
 }
@@ -166,6 +166,77 @@ pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
         sleep(Duration::from_millis(100)).await;
     }
 
+    Ok(())
+}
+
+/// If no daemon is currently running, spawn `soundboard-daemon` from the same
+/// directory as the current executable. Detached so closing the GUI does not
+/// tear the daemon down.
+///
+/// Returns Ok(()) if a daemon is already running or was spawned successfully.
+/// Returns Err if the daemon binary can't be located or the spawn itself
+/// fails; callers can still proceed — the GUI has a `wait_for_daemon` poll
+/// loop that tolerates a delayed startup.
+pub fn spawn_daemon_if_not_running() -> Result<(), Box<dyn Error>> {
+    if is_daemon_running().unwrap_or(false) {
+        return Ok(());
+    }
+
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or("could not resolve current exe directory")?;
+
+    let daemon_name = if cfg!(target_os = "windows") {
+        "soundboard-daemon.exe"
+    } else {
+        "soundboard-daemon"
+    };
+    let daemon_path = exe_dir.join(daemon_name);
+
+    if !daemon_path.is_file() {
+        return Err(format!(
+            "soundboard-daemon not found next to GUI at {}",
+            daemon_path.display()
+        )
+        .into());
+    }
+
+    let mut cmd = std::process::Command::new(&daemon_path);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS: child has no console attached and survives
+        // parent exit. CREATE_NEW_PROCESS_GROUP: child is not killed when
+        // the GUI's process group receives Ctrl+C.
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: setsid() is async-signal-safe and the only non-trivial
+        // operation performed between fork and exec. It detaches the child
+        // from the parent's controlling terminal/session so the daemon
+        // isn't killed by SIGHUP when the GUI (or its terminal) exits.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    cmd.spawn()?;
+    tracing::info!("Spawned soundboard-daemon from {}", daemon_path.display());
     Ok(())
 }
 

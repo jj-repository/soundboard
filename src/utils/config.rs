@@ -3,7 +3,7 @@ use std::{error::Error, path::PathBuf};
 pub fn get_config_path() -> Result<PathBuf, Box<dyn Error>> {
     let config_path = dirs::config_dir()
         .ok_or("Failed to obtain config directory: platform may not support config dirs")?;
-    Ok(config_path.join("pwsp"))
+    Ok(config_path.join("soundboard"))
 }
 
 #[cfg(test)]
@@ -19,8 +19,8 @@ mod tests {
         // The function should either succeed or return a meaningful error
         match result {
             Ok(path) => {
-                // Path should end with "pwsp"
-                assert!(path.ends_with("pwsp"), "Config path should end with 'pwsp'");
+                // Path should end with "soundboard"
+                assert!(path.ends_with("soundboard"), "Config path should end with 'soundboard'");
                 // Path should be within a config directory
                 assert!(path.to_string_lossy().contains("config") ||
                         path.to_string_lossy().contains(".config") ||

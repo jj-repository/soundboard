@@ -5,11 +5,11 @@ use egui::{
     ScrollArea, Slider, TextEdit, Ui, Vec2,
 };
 use egui_material_icons::icons;
-use pwsp::types::audio_player::PlayerState;
-use pwsp::types::config::HotkeyBinding;
-use pwsp::types::gui::{HotkeyRecording, UpdateStatus};
-use pwsp::utils::gui::format_time_pair;
-use pwsp::utils::updater::get_current_version;
+use soundboard::types::audio_player::PlayerState;
+use soundboard::types::config::HotkeyBinding;
+use soundboard::types::gui::{HotkeyRecording, UpdateStatus};
+use soundboard::utils::gui::format_time_pair;
+use soundboard::utils::updater::get_current_version;
 
 // UI Constants
 const CONTROL_SIZE: f32 = 30.0;
@@ -23,7 +23,7 @@ impl SoundpadGui {
     pub fn draw_waiting_for_daemon(&mut self, ui: &mut Ui) {
         ui.centered_and_justified(|ui| {
             ui.label(
-                RichText::new("Waiting for PWSP daemon to start...")
+                RichText::new("Waiting for Soundboard daemon to start...")
                     .size(34.0)
                     .monospace(),
             );
@@ -36,7 +36,7 @@ impl SoundpadGui {
 
             ui.label(
                 RichText::new(format!(
-                    "{} Welcome to PWSP!",
+                    "{} Welcome to Soundboard!",
                     icons::ICON_MUSIC_NOTE.codepoint
                 ))
                 .size(32.0)

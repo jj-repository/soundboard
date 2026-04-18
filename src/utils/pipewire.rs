@@ -292,7 +292,7 @@ pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<
         let props = properties!(
             "factory.name" => "support.null-audio-sink",
             "node.name" => VIRTUAL_MIC_NAME,
-            "node.description" => "PWSP Virtual Mic",
+            "node.description" => "Soundboard Virtual Mic",
             "media.class" => "Audio/Source/Virtual",
             "audio.position" => "[ FL FR ]",
             "audio.channels" => "2",

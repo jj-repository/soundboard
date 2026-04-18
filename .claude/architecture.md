@@ -2,10 +2,10 @@
 
 ## Multi-Process Design
 ```
-pwsp-daemon (background)
+soundboard-daemon (background)
     ↕ Unix socket (Linux) / TCP localhost:19735 (Windows)
-pwsp-gui (desktop client)
-pwsp-cli (terminal client)
+soundboard-gui (desktop client)
+soundboard-cli (terminal client)
 ```
 
 ## Daemon

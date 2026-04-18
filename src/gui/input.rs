@@ -1,7 +1,7 @@
 use crate::gui::{SoundpadGui, SUPPORTED_EXTENSIONS};
 use crate::gui::draw::create_hotkey_binding;
 use egui::{Context, Key};
-use pwsp::types::gui::HotkeyRecording;
+use soundboard::types::gui::HotkeyRecording;
 use std::path::PathBuf;
 
 impl SoundpadGui {

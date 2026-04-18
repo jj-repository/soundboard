@@ -1,14 +1,13 @@
 [package]
-name = "pwsp"
-version = "1.9.1"
+name = "soundboard"
+version = "1.10.0"
 edition = "2021"
 authors = ["arabian"]
-description = "PWSP lets you play audio files through your microphone. Has both CLI and GUI clients. Supports Linux (PipeWire) and Windows (VB-Audio Virtual Cable)."
+description = "Soundboard lets you play audio files through your microphone. Has both CLI and GUI clients. Supports Linux (PipeWire) and Windows (VB-Audio Virtual Cable)."
 readme = "README.md"
-homepage = "https://pwsp.arabianq.ru"
-repository = "https://github.com/arabianq/pipewire-soundpad"
+repository = "https://github.com/jj-repository/soundboard"
 license = "MIT"
-keywords = ["soundpad", "pipewire", "audio", "cli", "gui"]
+keywords = ["soundboard", "soundpad", "pipewire", "audio", "cli", "gui"]
 
 
 [dependencies]
@@ -37,6 +36,9 @@ open = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = "0.9.2"
 ksni = { version = "0.3", features = ["blocking"] }
@@ -49,15 +51,15 @@ muda = "0.17"
 ringbuf = "0.4"
 
 [[bin]]
-name = "pwsp-daemon"
+name = "soundboard-daemon"
 path = "src/bin/daemon.rs"
 
 [[bin]]
-name = "pwsp-cli"
+name = "soundboard-cli"
 path = "src/bin/cli.rs"
 
 [[bin]]
-name = "pwsp-gui"
+name = "soundboard-gui"
 path = "src/main.rs"
 
 [dev-dependencies]
@@ -69,16 +71,3 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 panic = "abort"
-
-[package.metadata.deb]
-maintainer = "arabian"
-extended-description = "PWSP (PipeWire SoundPad) lets you play audio files through your microphone. Includes a daemon, CLI client, and GUI client. Supports Linux (PipeWire) and Windows (VB-Audio Virtual Cable)."
-section = "sound"
-assets = [
-    ["target/release/pwsp-daemon", "usr/bin/", "755"],
-    ["target/release/pwsp-cli", "usr/bin/", "755"],
-    ["target/release/pwsp-gui", "usr/bin/", "755"],
-    ["assets/pwsp-gui.desktop", "usr/share/applications/pwsp.desktop", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/pwsp.png", "644"],
-    ["assets/pwsp-daemon.service", "usr/lib/systemd/user/pwsp-daemon.service", "644"],
-]

@@ -1,0 +1,11 @@
+[Unit]
+Description=Soundboard Daemon
+After=pipewire.service
+
+[Service]
+ExecStart=soundboard-daemon
+Restart=no
+RuntimeDirectory=soundboard
+
+[Install]
+WantedBy=default.target

@@ -56,7 +56,7 @@ pub struct UpdateInfo {
 
 pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sync>> {
     let client = Client::builder()
-        .user_agent("pwsp-updater")
+        .user_agent("soundboard-updater")
         .build()?;
 
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
@@ -81,19 +81,28 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sy
         _ => false,
     };
 
-    // Find the appropriate asset for the current platform
+    // Find the appropriate asset for the current platform. The Windows archive
+    // is just "soundboard.zip" with no platform suffix, so we exclude any
+    // asset that self-identifies as Linux to avoid a false positive.
     let download_url = release
         .assets
         .iter()
         .find(|a| {
             let name = a.name.to_lowercase();
+            if name.ends_with(".sha256") {
+                return false;
+            }
             #[cfg(target_os = "linux")]
             {
                 name.contains("linux") || name.ends_with(".tar.gz") || name.ends_with(".deb")
             }
             #[cfg(target_os = "windows")]
             {
-                name.contains("windows") || name.ends_with(".exe") || name.ends_with(".zip") || name.ends_with(".msi")
+                !name.contains("linux")
+                    && (name.contains("windows")
+                        || name.ends_with(".exe")
+                        || name.ends_with(".zip")
+                        || name.ends_with(".msi"))
             }
         })
         .map(|a| a.browser_download_url.clone());
@@ -148,7 +157,7 @@ pub async fn download_update(
     }
 
     let client = Client::builder()
-        .user_agent("pwsp-updater")
+        .user_agent("soundboard-updater")
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() > 5 {
                 return attempt.error("too many redirects");
@@ -188,7 +197,7 @@ pub async fn download_update(
         .map(|(_, ext)| ext)
         .filter(|ext| matches!(*ext, "zip" | "tar.gz" | "deb" | "exe" | "msi" | "gz"))
         .unwrap_or("bin");
-    let filename = format!("pwsp-update.{}", extension);
+    let filename = format!("soundboard-update.{}", extension);
 
     // Runtime-scoped download dir with restrictive perms, not shared /tmp
     let temp_dir = crate::utils::daemon::get_runtime_dir().join("updates");
@@ -226,10 +235,10 @@ pub async fn download_update(
     }
 
     // SHA-256 verification: the sidecar MUST exist unless checksum verification is
-    // explicitly opted out via PWSP_UPDATE_SKIP_CHECKSUM=1 (operator override for
+    // explicitly opted out via SOUNDBOARD_UPDATE_SKIP_CHECKSUM=1 (operator override for
     // legacy releases published before checksums were attached).
     let sha256_url = format!("{}.sha256", download_url);
-    let allow_skip = std::env::var("PWSP_UPDATE_SKIP_CHECKSUM")
+    let allow_skip = std::env::var("SOUNDBOARD_UPDATE_SKIP_CHECKSUM")
         .map(|v| v == "1")
         .unwrap_or(false);
 
@@ -244,7 +253,7 @@ pub async fn download_update(
         Ok(sha_response) if sha_response.status() == reqwest::StatusCode::NOT_FOUND && allow_skip => {
             tracing::error!(
                 "WARNING: SHA-256 sidecar missing for update. Skipping verification because \
-                 PWSP_UPDATE_SKIP_CHECKSUM=1 was set."
+                 SOUNDBOARD_UPDATE_SKIP_CHECKSUM=1 was set."
             );
         }
         Ok(sha_response) => {
@@ -350,15 +359,15 @@ mod tests {
             "body": null,
             "html_url": "https://example.com",
             "assets": [
-                {"name": "PWSP-Linux.zip", "browser_download_url": "https://dl.example.com/linux.zip", "size": 1024},
-                {"name": "PWSP-Windows.zip", "browser_download_url": "https://dl.example.com/win.zip", "size": 2048}
+                {"name": "soundboard-Linux.zip", "browser_download_url": "https://dl.example.com/linux.zip", "size": 1024},
+                {"name": "soundboard.zip", "browser_download_url": "https://dl.example.com/win.zip", "size": 2048}
             ],
             "prerelease": false,
             "draft": false
         }"#;
         let release: GitHubRelease = serde_json::from_str(json).unwrap();
         assert_eq!(release.assets.len(), 2);
-        assert_eq!(release.assets[0].name, "PWSP-Linux.zip");
+        assert_eq!(release.assets[0].name, "soundboard-Linux.zip");
         assert_eq!(release.assets[1].size, 2048);
     }
 
@@ -372,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_download_filename_known_extension() {
-        let url = "https://github.com/repo/releases/download/v1.0.0/PWSP-Linux.zip";
+        let url = "https://github.com/repo/releases/download/v1.0.0/soundboard-Linux.zip";
         let ext = url
             .split('/')
             .next_back()
@@ -401,7 +410,7 @@ mod tests {
     #[test]
     fn test_allowed_host_github_release_url() {
         assert!(is_allowed_host(
-            "https://github.com/jj-repository/soundboard/releases/download/v1.0.0/PWSP-Linux.zip"
+            "https://github.com/jj-repository/soundboard/releases/download/v1.0.0/soundboard-Linux.zip"
         ));
     }
 
@@ -460,7 +469,7 @@ mod tests {
         let file = write_temp_file(b"hello");
         let result = verify_sha256(
             file.path(),
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  PWSP-Linux.zip\n",
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  soundboard-Linux.zip\n",
         );
         assert!(result.is_ok());
     }

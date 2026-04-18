@@ -388,7 +388,7 @@ impl AudioPlayer {
             let (input_devices, _) = get_all_devices().await?;
 
             // Find the virtual mic
-            let pwsp_daemon_input = match input_devices
+            let soundboard_daemon_input = match input_devices
                 .iter()
                 .find(|d| d.name == crate::VIRTUAL_MIC_NAME)
                 .cloned()
@@ -396,7 +396,7 @@ impl AudioPlayer {
                 Some(device) => device,
                 None => {
                     if attempt == MAX_RETRIES {
-                        tracing::info!("Could not find pwsp-virtual-mic after {} attempts, skipping device linking", MAX_RETRIES);
+                        tracing::info!("Could not find soundboard-virtual-mic after {} attempts, skipping device linking", MAX_RETRIES);
                         return Ok(());
                     }
                     tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
@@ -425,8 +425,8 @@ impl AudioPlayer {
             match (
                 &current_input_device.output_fl,
                 &current_input_device.output_fr,
-                &pwsp_daemon_input.input_fl,
-                &pwsp_daemon_input.input_fr,
+                &soundboard_daemon_input.input_fl,
+                &soundboard_daemon_input.input_fr,
             ) {
                 (Some(output_fl), Some(output_fr), Some(input_fl), Some(input_fr)) => {
                     // All ports available, create the link

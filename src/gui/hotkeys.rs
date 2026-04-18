@@ -2,7 +2,7 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager,
     hotkey::{Code, HotKey, Modifiers},
 };
-use pwsp::types::config::{HotkeyBinding, HotkeyConfig};
+use soundboard::types::config::{HotkeyBinding, HotkeyConfig};
 use std::sync::{mpsc, Arc, RwLock};
 
 pub enum HotkeyAction {

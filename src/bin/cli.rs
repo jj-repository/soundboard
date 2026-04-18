@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use pwsp::{
+use soundboard::{
     types::socket::Request,
     utils::daemon::{make_request, wait_for_daemon},
 };
@@ -87,7 +87,7 @@ enum SetCommands {
     MicGain { mic_gain: f32 },
     /// Playback position (in seconds)
     Position { position: f32 },
-    /// Audio input id (see pwsp-cli get inputs)
+    /// Audio input id (see soundboard-cli get inputs)
     Input { name: String },
     /// Enable or disable loop (true or false)
     Loop { enabled: String },
@@ -95,7 +95,7 @@ enum SetCommands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    pwsp::utils::logging::init();
+    soundboard::utils::logging::init();
     let cli = Cli::parse();
 
     wait_for_daemon().await?;

@@ -123,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          ARCHIVE_NAME="PWSP-Linux.zip"
+          ARCHIVE_NAME="soundboard-Linux.zip"
           echo "Creating archive: $ARCHIVE_NAME"
 
           # читаем построчно список бинарников и формируем массив файлов
@@ -147,17 +147,17 @@ jobs:
             echo "Will add: $f"
           done
 
-          # создаём архив с бинарниками внутри как просто pwsp-gui, pwsp-daemon, pwsp-cli
+          # создаём архив с бинарниками внутри как просто soundboard-gui, soundboard-daemon, soundboard-cli
           zip -j "$ARCHIVE_NAME" "${FILES[@]}"
 
       - name: Generate checksum
-        run: sha256sum PWSP-Linux.zip > PWSP-Linux.zip.sha256
+        run: sha256sum soundboard-Linux.zip > soundboard-Linux.zip.sha256
 
       - name: Upload release assets
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
-            PWSP-Linux.zip \
-            PWSP-Linux.zip.sha256 \
+            soundboard-Linux.zip \
+            soundboard-Linux.zip.sha256 \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

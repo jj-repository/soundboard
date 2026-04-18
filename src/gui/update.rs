@@ -1,7 +1,7 @@
 use crate::gui::{MutexExt, SoundpadGui};
 use eframe::{App, Frame as EFrame};
 use egui::Ui;
-use pwsp::{
+use soundboard::{
     types::socket::Request,
     utils::{
         daemon::{get_daemon_config, is_daemon_running},

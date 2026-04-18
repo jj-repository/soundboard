@@ -3,9 +3,9 @@
 ## Commands
 ```bash
 cargo build --release
-cargo run --release --bin pwsp-gui
-cargo run --release --bin pwsp-daemon
-cargo run --release --bin pwsp-cli -- <command>
+cargo run --release --bin soundboard-gui
+cargo run --release --bin soundboard-daemon
+cargo run --release --bin soundboard-cli -- <command>
 cargo test
 ```
 

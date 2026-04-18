@@ -1,4 +1,4 @@
-use pwsp::{
+use soundboard::{
     types::{
         audio_player::PlayerState,
         socket::{Request, Response},
@@ -12,7 +12,7 @@ use pwsp::{
     },
 };
 #[cfg(target_os = "linux")]
-use pwsp::utils::{
+use soundboard::utils::{
     daemon::link_player_to_virtual_mic,
     pipewire::create_virtual_mic,
 };
@@ -24,7 +24,7 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    pwsp::utils::logging::init();
+    soundboard::utils::logging::init();
     create_runtime_dir()?;
 
     if is_daemon_running()? {
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     #[cfg(target_os = "windows")]
     let listener = {
-        use pwsp::utils::daemon::DAEMON_TCP_PORT;
+        use soundboard::utils::daemon::DAEMON_TCP_PORT;
         let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         tracing::info!("Daemon started. Listening on {}", addr);

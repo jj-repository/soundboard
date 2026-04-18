@@ -22,13 +22,13 @@ pub fn start_tray() -> Option<TrayHandle> {
     use ksni::{Icon, MenuItem, Tray};
     use ksni::blocking::TrayMethods;
 
-    struct PwspTray {
+    struct SoundboardTray {
         sender: mpsc::Sender<TrayMessage>,
     }
 
-    impl Tray for PwspTray {
+    impl Tray for SoundboardTray {
         fn id(&self) -> String {
-            "pwsp-soundpad".to_string()
+            "soundboard".to_string()
         }
 
         fn title(&self) -> String {
@@ -94,7 +94,7 @@ pub fn start_tray() -> Option<TrayHandle> {
     let (stop_sender, stop_receiver) = mpsc::channel::<()>();
 
     let thread_handle = thread::spawn(move || {
-        let tray = PwspTray { sender };
+        let tray = SoundboardTray { sender };
         match tray.spawn() {
             Ok(handle) => {
                 let _tray_handle = handle;
@@ -150,7 +150,7 @@ pub fn start_tray() -> Option<TrayHandle> {
 
         let mut builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("PWSP Soundpad");
+            .with_tooltip("Soundboard");
 
         if let Some(icon) = icon {
             builder = builder.with_icon(icon);

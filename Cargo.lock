@@ -3532,37 +3532,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
-name = "pwsp"
-version = "1.9.1"
-dependencies = [
- "async-trait",
- "clap",
- "dirs",
- "eframe",
- "egui",
- "egui_material_icons",
- "global-hotkey",
- "image",
- "ksni",
- "muda",
- "open",
- "pipewire",
- "reqwest",
- "rfd",
- "ringbuf",
- "rodio",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tray-icon",
-]
-
-[[package]]
 name = "pxfm"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4304,6 +4273,38 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "soundboard"
+version = "1.10.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "dirs",
+ "eframe",
+ "egui",
+ "egui_material_icons",
+ "global-hotkey",
+ "image",
+ "ksni",
+ "libc",
+ "muda",
+ "open",
+ "pipewire",
+ "reqwest",
+ "rfd",
+ "ringbuf",
+ "rodio",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tray-icon",
 ]
 
 [[package]]
