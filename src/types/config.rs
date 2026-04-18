@@ -218,7 +218,7 @@ pub struct GuiConfig {
 }
 
 fn default_auto_check_updates() -> bool {
-    true
+    false
 }
 
 fn default_sidebar_width() -> f32 {
