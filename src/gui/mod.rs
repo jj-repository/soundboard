@@ -754,8 +754,8 @@ impl SoundpadGui {
             }
         }
 
-        let mut _imported = 0;
-        let mut _skipped = 0;
+        let mut imported = 0;
+        let mut skipped = 0;
 
         for file in &files {
             // Only process supported audio files
@@ -779,7 +779,7 @@ impl SoundpadGui {
 
                 if safe_filename.is_empty() || safe_filename.starts_with('.') {
                     eprintln!("Skipping file with invalid name: {}", file.display());
-                    _skipped += 1;
+                    skipped += 1;
                     continue;
                 }
 
@@ -797,22 +797,24 @@ impl SoundpadGui {
                             "Security: Skipping file that would escape sounds folder: {}",
                             final_dest.display()
                         );
-                        _skipped += 1;
+                        skipped += 1;
                         continue;
                     }
                 };
 
                 match std::fs::copy(file, &validated_dest) {
                     Ok(_) => {
-                        _imported += 1;
-                        }
+                        imported += 1;
+                    }
                     Err(e) => {
                         eprintln!("Failed to copy {}: {}", file.display(), e);
-                        _skipped += 1;
+                        skipped += 1;
                     }
                 }
             }
         }
+
+        eprintln!("Import complete: {} imported, {} skipped", imported, skipped);
 
         // Refresh file list if viewing "All Sounds" playlist
         if self.app_state.current_playlist.as_deref() == Some("All Sounds") {

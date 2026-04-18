@@ -384,7 +384,7 @@ impl AudioPlayer {
             // Find the virtual mic
             let pwsp_daemon_input = match input_devices
                 .iter()
-                .find(|d| d.name == "pwsp-virtual-mic")
+                .find(|d| d.name == crate::VIRTUAL_MIC_NAME)
                 .cloned()
             {
                 Some(device) => device,

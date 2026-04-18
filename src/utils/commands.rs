@@ -109,13 +109,13 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
         "get_input" => Some(Box::new(GetCurrentInputCommand {})),
         "get_inputs" => Some(Box::new(GetAllInputsCommand {})),
         "set_input" => {
-            let name = Some(request.args.get("input_name").unwrap_or(&String::new())).cloned();
+            let name = request.args.get("input_name").cloned();
             Some(Box::new(SetCurrentInputCommand { name }))
         }
         "get_output" => Some(Box::new(GetCurrentOutputCommand {})),
         "get_outputs" => Some(Box::new(GetAllOutputsCommand {})),
         "set_output" => {
-            let name = Some(request.args.get("output_name").unwrap_or(&String::new())).cloned();
+            let name = request.args.get("output_name").cloned();
             Some(Box::new(SetCurrentOutputCommand { name }))
         }
         "get_loop" => Some(Box::new(GetLoopCommand {})),

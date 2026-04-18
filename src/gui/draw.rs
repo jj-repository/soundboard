@@ -10,7 +10,6 @@ use pwsp::types::config::HotkeyBinding;
 use pwsp::types::gui::{HotkeyRecording, UpdateStatus};
 use pwsp::utils::gui::format_time_pair;
 use pwsp::utils::updater::get_current_version;
-use std::error::Error;
 
 // UI Constants
 const CONTROL_SIZE: f32 = 30.0;
@@ -465,12 +464,11 @@ impl SoundpadGui {
         });
     }
 
-    pub fn draw(&mut self, ui: &mut Ui) -> Result<(), Box<dyn Error>> {
+    pub fn draw(&mut self, ui: &mut Ui) {
         self.draw_header(ui);
         self.draw_body(ui);
         ui.separator();
         self.draw_footer(ui);
-        Ok(())
     }
 
     fn draw_header(&mut self, ui: &mut Ui) {
@@ -1491,7 +1489,7 @@ impl SoundpadGui {
             let star_button = Button::new(star_icon).frame(false);
             let star_response = ui.add_sized([18.0, 18.0], star_button);
             if star_response.clicked() {
-                self.toggle_favorite(&entry_path.clone());
+                self.toggle_favorite(entry_path);
             }
             let hover_text = if is_favorite {
                 "Remove from favorites"
@@ -1614,7 +1612,7 @@ impl SoundpadGui {
             let star_button = Button::new(star_icon).frame(false);
             let star_response = ui.add_sized([18.0, 18.0], star_button);
             if star_response.clicked() {
-                self.toggle_favorite(&entry_path.clone());
+                self.toggle_favorite(entry_path);
             }
             let hover_text = if is_favorite {
                 "Remove from favorites"
@@ -1707,7 +1705,7 @@ impl SoundpadGui {
         let star_button = Button::new(star_icon).frame(false);
         let star_response = ui.add_sized([18.0, 18.0], star_button);
         if star_response.clicked() {
-            self.toggle_favorite(&entry_path.clone());
+            self.toggle_favorite(entry_path);
         }
         let hover_text = if is_favorite {
             "Remove from favorites"
@@ -1747,7 +1745,7 @@ impl SoundpadGui {
 
         // Right-click to reset to global volume
         if vol_response.secondary_clicked() && has_custom_volume {
-            self.set_sound_volume(&entry_path.clone(), None);
+            self.set_sound_volume(entry_path, None);
         }
 
         vol_response.on_hover_text(if has_custom_volume {
@@ -1767,7 +1765,7 @@ impl SoundpadGui {
         let slider_response = ui.add_sized([60.0, 14.0], slider);
 
         if slider_response.drag_stopped() {
-            self.set_sound_volume(&entry_path.clone(), Some(vol));
+            self.set_sound_volume(entry_path, Some(vol));
         }
 
         // Remove from playlist button
@@ -1874,7 +1872,7 @@ impl SoundpadGui {
             let star_button = Button::new(star_icon).frame(false);
             let star_response = ui.add_sized([18.0, 18.0], star_button);
             if star_response.clicked() {
-                self.toggle_favorite(&entry_path.clone());
+                self.toggle_favorite(entry_path);
             }
             let hover_text = if is_favorite {
                 "Remove from favorites"
@@ -1947,7 +1945,7 @@ impl SoundpadGui {
 
             // Right-click to reset to global volume
             if vol_response.secondary_clicked() && has_custom_volume {
-                self.set_sound_volume(&entry_path.clone(), None);
+                self.set_sound_volume(entry_path, None);
             }
 
             vol_response.on_hover_text(if has_custom_volume {
@@ -1967,7 +1965,7 @@ impl SoundpadGui {
             let slider_response = ui.add_sized([60.0, 14.0], slider);
 
             if slider_response.drag_stopped() {
-                self.set_sound_volume(&entry_path.clone(), Some(vol));
+                self.set_sound_volume(entry_path, Some(vol));
             }
 
             // Remove/Delete button
@@ -1996,7 +1994,7 @@ impl SoundpadGui {
             if remove_response.clicked() {
                 if is_favourites {
                     // Remove from favorites and refresh view
-                    self.toggle_favorite(&entry_path.clone());
+                    self.toggle_favorite(entry_path);
                 } else {
                     self.remove_from_playlist(playlist_name, entry_path);
                 }

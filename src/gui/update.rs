@@ -59,7 +59,7 @@ impl App for SoundpadGui {
             return;
         }
 
-        self.draw(ui).ok();
+        self.draw(ui);
 
         if let Some(force_focus_id) = self.app_state.force_focus_id {
             ui.memory_mut(|mem| {

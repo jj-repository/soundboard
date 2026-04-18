@@ -431,12 +431,18 @@ impl Executable for GetAllOutputsCommand {
 #[async_trait]
 impl Executable for SetCurrentOutputCommand {
     async fn execute(&self) -> Response {
-        if let Some(_name) = &self.name {
-            // Note: Changing output device requires restarting the audio stream
-            // For now, we just save the preference - it will take effect on next daemon restart
-            Response::new(true, "Output device preference saved (restart daemon to apply)")
-        } else {
-            Response::new(false, "Invalid output device name")
+        let Some(name) = self.name.clone() else {
+            return Response::new(false, "Invalid output device name");
+        };
+
+        let mut config = crate::utils::daemon::get_daemon_config();
+        config.default_output_name = Some(name);
+        match config.save_to_file() {
+            Ok(()) => Response::new(
+                true,
+                "Output device preference saved (restart daemon to apply)",
+            ),
+            Err(e) => Response::new(false, format!("Failed to save preference: {}", e)),
         }
     }
 }
