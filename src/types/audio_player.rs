@@ -19,8 +19,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-#[cfg(target_os = "windows")]
-use std::{collections::VecDeque, sync::Arc};
 
 #[derive(Debug, Eq, PartialEq, Default, Clone, Copy, Serialize, Deserialize)]
 pub enum PlayerState {
@@ -113,37 +111,41 @@ pub const MAX_MIC_GAIN: f32 = 3.0;
 /// Minimum mic gain multiplier (0.5x = -6dB, prevents complete silence)
 pub const MIN_MIC_GAIN: f32 = 0.5;
 
-/// Shared ring buffer for mic audio samples (Windows mic passthrough)
+/// Lock-free SPSC ring buffer wiring for the Windows mic passthrough.
+/// The cpal input callback pushes samples; the rodio output thread pops
+/// them. Dropping the per-sample Mutex avoids priority inversion and the
+/// per-sample lock acquisition at 48 kHz.
 #[cfg(target_os = "windows")]
-struct MicBuffer {
-    samples: std::sync::Mutex<VecDeque<f32>>,
-    sample_rate: u32,
-    channels: u16,
-}
+use ringbuf::{
+    HeapRb,
+    traits::{Consumer as ConsumerTrait, Producer as ProducerTrait, Split},
+};
 
-/// Custom rodio Source that reads captured mic audio from a shared buffer
+#[cfg(target_os = "windows")]
+type MicConsumer = <HeapRb<f32> as Split>::Cons;
+
+/// Custom rodio Source that reads captured mic audio from a lock-free ring.
 #[cfg(target_os = "windows")]
 struct MicSource {
-    buffer: Arc<MicBuffer>,
+    consumer: MicConsumer,
+    sample_rate: u32,
+    channels: u16,
 }
 
 #[cfg(target_os = "windows")]
 impl Iterator for MicSource {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
-        if let Ok(mut buf) = self.buffer.samples.lock() {
-            Some(buf.pop_front().unwrap_or(0.0))
-        } else {
-            Some(0.0) // Return silence on lock failure
-        }
+        // Return silence on underflow rather than stopping the source.
+        Some(self.consumer.try_pop().unwrap_or(0.0))
     }
 }
 
 #[cfg(target_os = "windows")]
 impl Source for MicSource {
     fn current_span_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> u16 { self.buffer.channels }
-    fn sample_rate(&self) -> u32 { self.buffer.sample_rate }
+    fn channels(&self) -> u16 { self.channels }
+    fn sample_rate(&self) -> u32 { self.sample_rate }
     fn total_duration(&self) -> Option<Duration> { None }
 }
 
@@ -721,59 +723,40 @@ impl AudioPlayer {
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
 
-        let buffer = Arc::new(MicBuffer {
-            samples: std::sync::Mutex::new(VecDeque::with_capacity(sample_rate as usize)),
-            sample_rate,
-            channels,
-        });
+        // Ring capacity = ~500ms of audio. Oldest samples are overwritten on
+        // overflow (push_overwrite), which matches the previous
+        // "drop oldest when full" policy without any lock.
+        let max_samples = (sample_rate as usize * channels as usize) / 2;
+        let ring = HeapRb::<f32>::new(max_samples.max(1));
+        let (mut producer, consumer) = ring.split();
 
         let (stop_tx, stop_rx) = std::sync::mpsc::channel();
-        let buffer_clone = buffer.clone();
-        // Cap buffer at ~500ms to prevent latency buildup
-        let max_samples = (sample_rate as usize * channels as usize) / 2;
 
         // Spawn capture thread (cpal::Stream may not be Send on all platforms)
         std::thread::spawn(move || {
-            let push_f32 = {
-                let buf = buffer_clone.clone();
-                move |data: &[f32]| {
-                    if let Ok(mut b) = buf.samples.lock() {
-                        while b.len() > max_samples {
-                            b.pop_front();
-                        }
-                        b.extend(data);
-                    }
-                }
-            };
-
             let stream_result = match sample_format {
-                cpal::SampleFormat::F32 => {
-                    let push = push_f32;
-                    device.build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| { push(data); },
-                        |err| eprintln!("Mic input error: {}", err),
-                        None,
-                    )
-                }
-                cpal::SampleFormat::I16 => {
-                    device.build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            let f32_data: Vec<f32> = data.iter()
-                                .map(|&s| s as f32 / 32768.0)
-                                .collect();
-                            if let Ok(mut b) = buffer_clone.samples.lock() {
-                                while b.len() > max_samples {
-                                    b.pop_front();
-                                }
-                                b.extend(f32_data);
-                            }
-                        },
-                        |err| eprintln!("Mic input error: {}", err),
-                        None,
-                    )
-                }
+                cpal::SampleFormat::F32 => device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        for &s in data {
+                            // push_overwrite drops the oldest sample when
+                            // full — no allocation, no lock, RT-safe.
+                            producer.push_overwrite(s);
+                        }
+                    },
+                    |err| eprintln!("Mic input error: {}", err),
+                    None,
+                ),
+                cpal::SampleFormat::I16 => device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        for &s in data {
+                            producer.push_overwrite(s as f32 / 32768.0);
+                        }
+                    },
+                    |err| eprintln!("Mic input error: {}", err),
+                    None,
+                ),
                 format => {
                     eprintln!("Unsupported mic sample format: {:?}", format);
                     return;
@@ -797,7 +780,11 @@ impl AudioPlayer {
         });
 
         // Connect MicSource to the mic sink on the output mixer
-        let mic_source = MicSource { buffer };
+        let mic_source = MicSource {
+            consumer,
+            sample_rate,
+            channels,
+        };
         self.mic_sink.stop();
         self.mic_sink.append(mic_source);
         self.mic_sink.play();

@@ -42,6 +42,9 @@ ksni = { version = "0.3", features = ["blocking"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 tray-icon = "0.22"
 muda = "0.17"
+# Lock-free SPSC ring buffer for mic passthrough. Avoids locking the audio
+# callback against the playback thread at 48 kHz.
+ringbuf = "0.4"
 
 [[bin]]
 name = "pwsp-daemon"
