@@ -1,7 +1,7 @@
 # PWSP (PipeWire SoundPad)
 
 Cross-platform Rust soundboard — plays audio through your microphone. Daemon architecture with GUI and CLI clients. Stack: Rust, egui/eframe, rodio, PipeWire (Linux), VB-Audio (Windows), Tokio.
-v1.08
+v1.09
 
 Docs: .claude/index.md
 
