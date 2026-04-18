@@ -4,11 +4,25 @@ use pipewire::{
     context::ContextRc, link::Link, main_loop::MainLoopRc, properties::properties,
     registry::GlobalObject, spa::utils::dict::DictRef,
 };
-use std::{collections::HashMap, error::Error, thread};
+use std::{collections::HashMap, error::Error, sync::OnceLock, thread, time::Instant};
 use tokio::{
-    sync::mpsc,
+    sync::{Mutex, mpsc},
     time::{Duration, timeout},
 };
+
+type DeviceSnapshot = (Vec<AudioDevice>, Vec<AudioDevice>);
+const DEVICE_CACHE_TTL: Duration = Duration::from_secs(2);
+
+fn device_cache() -> &'static Mutex<Option<(Instant, DeviceSnapshot)>> {
+    static CACHE: OnceLock<Mutex<Option<(Instant, DeviceSnapshot)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Drop the cached device snapshot so the next `get_all_devices()` call re-enumerates.
+/// Call after operations that change the device graph (virtual mic creation, link changes).
+pub async fn invalidate_device_cache() {
+    *device_cache().lock().await = None;
+}
 
 /// Assign a PipeWire port to the appropriate field on an AudioDevice
 fn assign_port_to_device(device: &mut AudioDevice, port: Port) {
@@ -155,7 +169,22 @@ async fn pw_get_global_objects_thread(
     main_loop.run();
 }
 
-pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), Box<dyn Error>> {
+pub async fn get_all_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
+    {
+        let guard = device_cache().lock().await;
+        if let Some((fetched_at, snapshot)) = guard.as_ref() {
+            if fetched_at.elapsed() < DEVICE_CACHE_TTL {
+                return Ok(snapshot.clone());
+            }
+        }
+    }
+
+    let snapshot = enumerate_devices().await?;
+    *device_cache().lock().await = Some((Instant::now(), snapshot.clone()));
+    Ok(snapshot)
+}
+
+async fn enumerate_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
     let (main_sender, mut main_receiver) = mpsc::channel(10);
     let (pw_sender, pw_receiver) = pipewire::channel::channel();
 
@@ -212,6 +241,14 @@ pub async fn get_all_devices() -> Result<(Vec<AudioDevice>, Vec<AudioDevice>), B
 }
 
 pub async fn get_device(device_name: &str) -> Result<AudioDevice, Box<dyn Error>> {
+    if let Ok(device) = get_device_impl(device_name).await {
+        return Ok(device);
+    }
+    invalidate_device_cache().await;
+    get_device_impl(device_name).await
+}
+
+async fn get_device_impl(device_name: &str) -> Result<AudioDevice, Box<dyn Error>> {
     let (mut input_devices, output_devices) = get_all_devices().await?;
     input_devices.extend(output_devices);
 

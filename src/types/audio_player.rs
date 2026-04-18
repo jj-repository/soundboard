@@ -2,7 +2,7 @@
 use crate::{
     types::pipewire::{AudioDevice, DeviceType, Terminate},
     utils::{
-        pipewire::{create_link, get_all_devices, get_device},
+        pipewire::{create_link, get_all_devices, get_device, invalidate_device_cache},
     },
 };
 use crate::utils::daemon::get_daemon_config;
@@ -381,6 +381,10 @@ impl AudioPlayer {
         const RETRY_DELAY_MS: u64 = 100;
 
         for attempt in 1..=MAX_RETRIES {
+            if attempt > 1 {
+                // Retrying because the expected device wasn't visible yet; force fresh enumeration.
+                invalidate_device_cache().await;
+            }
             let (input_devices, _) = get_all_devices().await?;
 
             // Find the virtual mic
