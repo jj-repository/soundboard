@@ -211,14 +211,14 @@ mod tests {
     fn test_version_comparison_same() {
         let latest = Version::parse("1.8.0").unwrap();
         let current = Version::parse("1.8.0").unwrap();
-        assert!(!(latest > current));
+        assert!(latest <= current);
     }
 
     #[test]
     fn test_version_comparison_older() {
         let latest = Version::parse("1.7.0").unwrap();
         let current = Version::parse("1.8.0").unwrap();
-        assert!(!(latest > current));
+        assert!(latest <= current);
     }
 
     #[test]

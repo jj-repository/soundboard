@@ -420,16 +420,18 @@ mod tests {
 
     #[test]
     fn test_gui_config_roundtrip() {
-        let mut config = GuiConfig::default();
-        config.save_volume = true;
-        config.scale_factor = 1.5;
-        config.sounds_folder = Some(PathBuf::from("/home/user/sounds"));
-        config.sidebar_width = 250.0;
+        let config = GuiConfig {
+            save_volume: true,
+            scale_factor: 1.5,
+            sounds_folder: Some(PathBuf::from("/home/user/sounds")),
+            sidebar_width: 250.0,
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&config).expect("serialize");
         let loaded: GuiConfig = serde_json::from_str(&json).expect("deserialize");
 
-        assert_eq!(loaded.save_volume, true);
+        assert!(loaded.save_volume);
         assert_eq!(loaded.scale_factor, 1.5);
         assert_eq!(
             loaded.sounds_folder,
