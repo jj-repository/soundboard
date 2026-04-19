@@ -28,8 +28,13 @@ jobs:
       - name: Create release
         if: steps.v.outputs.is_new == 'true'
         run: |
-          gh release create "v${{ steps.v.outputs.version }}" \
-            --title "v${{ steps.v.outputs.version }}" \
+          TAG="v${{ steps.v.outputs.version }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
             --generate-notes
+          DISCLAIMER=$'## 📥 Downloads\n\n**Just grab one file:**\n- **Windows** → `soundboard.zip`\n- **Linux** → `soundboard-Linux.zip`\n\nThe `.sha256` files are optional checksums for verifying the download — you don\'t need them to use the app.\n\n---\n\n'
+          BODY=$(gh release view "$TAG" --json body -q .body)
+          printf '%s%s' "$DISCLAIMER" "$BODY" > /tmp/release_notes.md
+          gh release edit "$TAG" --notes-file /tmp/release_notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
