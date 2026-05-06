@@ -1,4 +1,5 @@
 use soundboard::{
+    error::Result,
     types::{
         audio_player::PlayerState,
         socket::{Request, Response},
@@ -16,19 +17,19 @@ use soundboard::utils::{
     daemon::link_player_to_virtual_mic,
     pipewire::create_virtual_mic,
 };
-use std::{error::Error, fs, time::Duration};
+use std::{fs, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     time::{sleep, timeout},
 };
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     soundboard::utils::logging::init();
     create_runtime_dir()?;
 
     if is_daemon_running()? {
-        return Err("Another instance is already running.".into());
+        return Err("another instance is already running".into());
     }
 
     get_daemon_config();
@@ -36,10 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "linux")]
     create_virtual_mic()?;
 
-    if let Err(e) = init_audio_player().await {
-        tracing::error!("Failed to initialize audio player: {}", e);
-        return Err(format!("Cannot start daemon: audio player initialization failed: {}", e).into());
-    }
+    init_audio_player().await?;
 
     #[cfg(target_os = "linux")]
     link_player_to_virtual_mic().await?;
@@ -207,7 +205,7 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
 }
 
 #[cfg(target_os = "linux")]
-async fn commands_loop(listener: tokio::net::UnixListener) -> Result<(), Box<dyn Error>> {
+async fn commands_loop(listener: tokio::net::UnixListener) -> Result<()> {
     loop {
         let (stream, _addr) = listener.accept().await?;
         tokio::spawn(handle_connection(stream));
@@ -215,7 +213,7 @@ async fn commands_loop(listener: tokio::net::UnixListener) -> Result<(), Box<dyn
 }
 
 #[cfg(target_os = "windows")]
-async fn commands_loop(listener: tokio::net::TcpListener) -> Result<(), Box<dyn Error>> {
+async fn commands_loop(listener: tokio::net::TcpListener) -> Result<()> {
     loop {
         let (stream, _addr) = listener.accept().await?;
         tokio::spawn(handle_connection(stream));

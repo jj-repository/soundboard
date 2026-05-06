@@ -27,10 +27,11 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
 use std::{
     collections::HashMap,
-    error::Error,
     sync::{Arc, Mutex},
     thread,
 };
+
+use soundboard::error::Result;
 
 const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "mp3", "wav", "ogg", "flac", "mp4", "m4a", "aac", "mov", "mkv", "webm", "avi", "opus", "wma",
@@ -967,7 +968,7 @@ impl SoundpadGui {
     }
 }
 
-pub async fn run() -> Result<(), Box<dyn Error>> {
+pub async fn run() -> Result<()> {
     // Best-effort: start the daemon if the user launched the GUI directly.
     // Failure here is non-fatal — the state-sync loop already waits for a
     // live daemon and the user may have their own daemon setup.
@@ -986,7 +987,10 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             let builder = ViewportBuilder::default()
                 .with_inner_size(Vec2::new(1200.0, 800.0))
                 .with_min_inner_size(Vec2::new(800.0, 600.0))
-                .with_icon(from_png_bytes(ICON)?);
+                .with_icon(
+                    from_png_bytes(ICON)
+                        .map_err(|e| soundboard::SoundboardError::Other(e.to_string()))?,
+                );
 
             #[cfg(target_os = "linux")]
             let builder = builder.with_app_id("dev.jjr.soundboard");
@@ -1012,6 +1016,6 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(soundboard::SoundboardError::Other(e.to_string())),
     }
 }

@@ -1,10 +1,11 @@
 use crate::VIRTUAL_MIC_NAME;
+use crate::error::{Result, SoundboardError};
 use crate::types::pipewire::{AudioDevice, DeviceType, Port, Terminate};
 use pipewire::{
     context::ContextRc, link::Link, main_loop::MainLoopRc, properties::properties,
     registry::GlobalObject, spa::utils::dict::DictRef,
 };
-use std::{collections::HashMap, error::Error, sync::OnceLock, thread, time::Instant};
+use std::{collections::HashMap, sync::OnceLock, thread, time::Instant};
 use tokio::{
     sync::{Mutex, mpsc},
     time::{Duration, timeout},
@@ -169,7 +170,7 @@ async fn pw_get_global_objects_thread(
     main_loop.run();
 }
 
-pub async fn get_all_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
+pub async fn get_all_devices() -> Result<DeviceSnapshot> {
     {
         let guard = device_cache().lock().await;
         if let Some((fetched_at, snapshot)) = guard.as_ref() {
@@ -184,7 +185,7 @@ pub async fn get_all_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
     Ok(snapshot)
 }
 
-async fn enumerate_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
+async fn enumerate_devices() -> Result<DeviceSnapshot> {
     let (main_sender, mut main_receiver) = mpsc::channel(10);
     let (pw_sender, pw_receiver) = pipewire::channel::channel();
 
@@ -240,7 +241,7 @@ async fn enumerate_devices() -> Result<DeviceSnapshot, Box<dyn Error>> {
     }
 }
 
-pub async fn get_device(device_name: &str) -> Result<AudioDevice, Box<dyn Error>> {
+pub async fn get_device(device_name: &str) -> Result<AudioDevice> {
     if let Ok(device) = get_device_impl(device_name).await {
         return Ok(device);
     }
@@ -248,7 +249,7 @@ pub async fn get_device(device_name: &str) -> Result<AudioDevice, Box<dyn Error>
     get_device_impl(device_name).await
 }
 
-async fn get_device_impl(device_name: &str) -> Result<AudioDevice, Box<dyn Error>> {
+async fn get_device_impl(device_name: &str) -> Result<AudioDevice> {
     let (mut input_devices, output_devices) = get_all_devices().await?;
     input_devices.extend(output_devices);
 
@@ -258,10 +259,10 @@ async fn get_device_impl(device_name: &str) -> Result<AudioDevice, Box<dyn Error
         }
     }
 
-    Err("Device not found".into())
+    Err(SoundboardError::DeviceNotFound(device_name.to_string()))
 }
 
-pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>, Box<dyn Error>> {
+pub fn create_virtual_mic() -> Result<pipewire::channel::Sender<Terminate>> {
     let (pw_sender, pw_receiver) = pipewire::channel::channel::<Terminate>();
 
     let _pw_thread = thread::spawn(move || {
@@ -323,7 +324,7 @@ pub fn create_link(
     output_fr: Port,
     input_fl: Port,
     input_fr: Port,
-) -> Result<pipewire::channel::Sender<Terminate>, Box<dyn Error>> {
+) -> Result<pipewire::channel::Sender<Terminate>> {
     let (pw_sender, pw_receiver) = pipewire::channel::channel::<Terminate>();
 
     let _pw_thread = thread::spawn(move || {

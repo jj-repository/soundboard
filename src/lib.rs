@@ -1,5 +1,8 @@
+pub mod error;
 pub mod types;
 pub mod utils;
+
+pub use error::{Result, SoundboardError};
 
 /// PipeWire node name for the virtual microphone
 pub const VIRTUAL_MIC_NAME: &str = "soundboard-virtual-mic";

@@ -1,4 +1,5 @@
 use crate::{
+    error::{Result, SoundboardError},
     types::{
         audio_player::AudioPlayer,
         config::DaemonConfig,
@@ -9,8 +10,8 @@ use crate::{
 use crate::{DAEMON_OUTPUT_NAME, VIRTUAL_MIC_NAME};
 #[cfg(target_os = "linux")]
 use crate::utils::pipewire::{create_link, get_all_devices};
+use std::fs;
 use std::path::PathBuf;
-use std::{error::Error, fs};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{Mutex, OnceCell},
@@ -24,17 +25,15 @@ pub const DAEMON_TCP_PORT: u16 = 19735;
 static AUDIO_PLAYER: OnceCell<Mutex<AudioPlayer>> = OnceCell::const_new();
 
 /// Initialize the audio player. Must be called before get_audio_player().
-pub async fn init_audio_player() -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn init_audio_player() -> Result<()> {
     if AUDIO_PLAYER.get().is_some() {
         return Ok(());
     }
 
-    let player = AudioPlayer::new()
-        .await
-        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+    let player = AudioPlayer::new().await?;
     AUDIO_PLAYER
         .set(Mutex::new(player))
-        .map_err(|_| -> Box<dyn Error + Send + Sync> { "Audio player already initialized".into() })?;
+        .map_err(|_| SoundboardError::AudioPlayerAlreadyInit)?;
     Ok(())
 }
 
@@ -60,7 +59,7 @@ pub fn get_daemon_config() -> DaemonConfig {
 }
 
 #[cfg(target_os = "linux")]
-pub async fn link_player_to_virtual_mic() -> Result<(), Box<dyn Error>> {
+pub async fn link_player_to_virtual_mic() -> Result<()> {
     let (input_devices, output_devices) = get_all_devices().await?;
 
     let soundboard_daemon_output = match output_devices
@@ -127,7 +126,7 @@ pub fn get_runtime_dir() -> PathBuf {
     }
 }
 
-pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
+pub fn create_runtime_dir() -> Result<()> {
     let runtime_dir = get_runtime_dir();
     if !runtime_dir.exists() {
         fs::create_dir_all(&runtime_dir)?;
@@ -142,7 +141,7 @@ pub fn create_runtime_dir() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn is_daemon_running() -> Result<bool, Box<dyn Error>> {
+pub fn is_daemon_running() -> Result<bool> {
     // The advisory lock is what tells us whether the daemon is alive; the lock
     // file contents are irrelevant, so do not truncate and race the running
     // daemon's open handle.
@@ -157,7 +156,7 @@ pub fn is_daemon_running() -> Result<bool, Box<dyn Error>> {
     }
 }
 
-pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
+pub async fn wait_for_daemon() -> Result<()> {
     if is_daemon_running()? {
         return Ok(());
     }
@@ -177,7 +176,7 @@ pub async fn wait_for_daemon() -> Result<(), Box<dyn Error>> {
 /// Returns Err if the daemon binary can't be located or the spawn itself
 /// fails; callers can still proceed — the GUI has a `wait_for_daemon` poll
 /// loop that tolerates a delayed startup.
-pub fn spawn_daemon_if_not_running() -> Result<(), Box<dyn Error>> {
+pub fn spawn_daemon_if_not_running() -> Result<()> {
     if is_daemon_running().unwrap_or(false) {
         return Ok(());
     }
@@ -243,7 +242,7 @@ pub fn spawn_daemon_if_not_running() -> Result<(), Box<dyn Error>> {
 async fn send_and_receive(
     mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     request: Request,
-) -> Result<Response, Box<dyn Error + Send + Sync>> {
+) -> Result<Response> {
     use tokio::time::{timeout, Duration};
 
     let request_data = serde_json::to_vec(&request)?;
@@ -251,42 +250,41 @@ async fn send_and_receive(
 
     timeout(Duration::from_secs(2), stream.write_all(&request_len.to_le_bytes()))
         .await
-        .map_err(|_| "Send timeout")?
-        .map_err(|_| "Failed to send request length")?;
+        .map_err(|_| SoundboardError::Ipc("send timeout".into()))?
+        .map_err(|e| SoundboardError::Ipc(format!("failed to send request length: {e}")))?;
 
     timeout(Duration::from_secs(2), stream.write_all(&request_data))
         .await
-        .map_err(|_| "Send timeout")?
-        .map_err(|_| "Failed to send request")?;
+        .map_err(|_| SoundboardError::Ipc("send timeout".into()))?
+        .map_err(|e| SoundboardError::Ipc(format!("failed to send request: {e}")))?;
 
     const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
 
     let mut len_bytes = [0u8; 4];
     timeout(Duration::from_secs(5), stream.read_exact(&mut len_bytes))
         .await
-        .map_err(|_| "Read timeout")?
-        .map_err(|_| "Failed to read response length")?;
+        .map_err(|_| SoundboardError::Ipc("read timeout".into()))?
+        .map_err(|e| SoundboardError::Ipc(format!("failed to read response length: {e}")))?;
 
     let response_len = u32::from_le_bytes(len_bytes) as usize;
 
     if response_len > MAX_RESPONSE_SIZE {
-        return Err(format!(
-            "Response too large: {} bytes (max {})",
-            response_len, MAX_RESPONSE_SIZE
-        )
-        .into());
+        return Err(SoundboardError::ResponseTooLarge {
+            actual: response_len,
+            max: MAX_RESPONSE_SIZE,
+        });
     }
 
     let mut buffer = vec![0u8; response_len];
     timeout(Duration::from_secs(5), stream.read_exact(&mut buffer))
         .await
-        .map_err(|_| "Read timeout")?
-        .map_err(|_| "Failed to read response")?;
+        .map_err(|_| SoundboardError::Ipc("read timeout".into()))?
+        .map_err(|e| SoundboardError::Ipc(format!("failed to read response: {e}")))?;
 
     Ok(serde_json::from_slice(&buffer)?)
 }
 
-pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + Send + Sync>> {
+pub async fn make_request(request: Request) -> Result<Response> {
     use tokio::time::timeout;
 
     #[cfg(target_os = "linux")]
@@ -294,8 +292,8 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
         let socket_path = get_runtime_dir().join("daemon.sock");
         let stream = timeout(Duration::from_secs(2), tokio::net::UnixStream::connect(socket_path))
             .await
-            .map_err(|_| "Connection timeout")?
-            .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+            .map_err(|_| SoundboardError::DaemonTimeout)?
+            .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
         send_and_receive(stream, request).await
     }
     #[cfg(target_os = "windows")]
@@ -303,8 +301,8 @@ pub async fn make_request(request: Request) -> Result<Response, Box<dyn Error + 
         let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
         let stream = timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr))
             .await
-            .map_err(|_| "Connection timeout")?
-            .map_err(|e| -> Box<dyn Error + Send + Sync> { e.to_string().into() })?;
+            .map_err(|_| SoundboardError::DaemonTimeout)?
+            .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
         send_and_receive(stream, request).await
     }
 }

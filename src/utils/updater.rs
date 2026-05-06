@@ -2,10 +2,11 @@ use reqwest::Client;
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::error::Error;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use crate::error::{Result, SoundboardError};
 
 const GITHUB_REPO: &str = "jj-repository/soundboard";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -54,7 +55,7 @@ pub struct UpdateInfo {
     pub update_available: bool,
 }
 
-pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sync>> {
+pub async fn check_for_updates() -> Result<UpdateInfo> {
     let client = Client::builder()
         .user_agent("soundboard-updater")
         .build()?;
@@ -64,7 +65,10 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sy
     let response = client.get(&url).send().await?;
 
     if !response.status().is_success() {
-        return Err(format!("GitHub API returned status: {}", response.status()).into());
+        return Err(SoundboardError::UpdateParse(format!(
+            "GitHub API returned status: {}",
+            response.status()
+        )));
     }
 
     let release: GitHubRelease = response.json().await?;
@@ -118,7 +122,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error + Send + Sy
     })
 }
 
-fn verify_sha256(file_path: &Path, expected_hash: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+fn verify_sha256(file_path: &Path, expected_hash: &str) -> Result<()> {
     let mut file = File::open(file_path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
@@ -137,13 +141,11 @@ fn verify_sha256(file_path: &Path, expected_hash: &str) -> Result<(), Box<dyn Er
         .unwrap_or("")
         .trim()
         .to_lowercase();
-    if actual != expected {
-        return Err(format!(
-            "SHA-256 mismatch! Expected: {}... Got: {}...",
-            &expected[..expected.len().min(16)],
-            &actual[..actual.len().min(16)]
-        )
-        .into());
+    if expected.is_empty() || actual != expected {
+        return Err(SoundboardError::UpdateChecksum {
+            expected: expected.chars().take(16).collect(),
+            actual: actual.chars().take(16).collect(),
+        });
     }
     Ok(())
 }
@@ -151,9 +153,12 @@ fn verify_sha256(file_path: &Path, expected_hash: &str) -> Result<(), Box<dyn Er
 pub async fn download_update(
     download_url: &str,
     progress_callback: impl Fn(u64, u64),
-) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+) -> Result<PathBuf> {
     if !is_allowed_host(download_url) {
-        return Err(format!("Refusing download from untrusted host: {}", download_url).into());
+        return Err(SoundboardError::UpdateDownload(format!(
+            "refusing download from untrusted host: {}",
+            download_url
+        )));
     }
 
     let client = Client::builder()
@@ -177,16 +182,18 @@ pub async fn download_update(
     let response = client.get(download_url).send().await?;
 
     if !response.status().is_success() {
-        return Err(format!("Download failed with status: {}", response.status()).into());
+        return Err(SoundboardError::UpdateDownload(format!(
+            "download failed with status: {}",
+            response.status()
+        )));
     }
 
     let total_size = response.content_length().unwrap_or(0);
     if total_size > MAX_UPDATE_SIZE {
-        return Err(format!(
-            "Update too large: {} bytes (max {})",
+        return Err(SoundboardError::UpdateDownload(format!(
+            "update too large: {} bytes (max {})",
             total_size, MAX_UPDATE_SIZE
-        )
-        .into());
+        )));
     }
 
     // Use a predictable filename based on URL's extension to avoid trusting attacker-controlled filenames
@@ -228,7 +235,10 @@ pub async fn download_update(
         if downloaded > MAX_UPDATE_SIZE {
             drop(file);
             let _ = fs::remove_file(&file_path);
-            return Err(format!("Update exceeded max size of {} bytes", MAX_UPDATE_SIZE).into());
+            return Err(SoundboardError::UpdateDownload(format!(
+                "update exceeded max size of {} bytes",
+                MAX_UPDATE_SIZE
+            )));
         }
         file.write_all(&chunk)?;
         progress_callback(downloaded, total_size);
@@ -258,15 +268,17 @@ pub async fn download_update(
         }
         Ok(sha_response) => {
             let _ = fs::remove_file(&file_path);
-            return Err(format!(
-                "Refusing to install update: checksum fetch returned status {}",
+            return Err(SoundboardError::UpdateDownload(format!(
+                "refusing to install update: checksum fetch returned status {}",
                 sha_response.status()
-            )
-            .into());
+            )));
         }
         Err(e) => {
             let _ = fs::remove_file(&file_path);
-            return Err(format!("Refusing to install update: checksum fetch failed: {}", e).into());
+            return Err(SoundboardError::UpdateDownload(format!(
+                "refusing to install update: checksum fetch failed: {}",
+                e
+            )));
         }
     }
 

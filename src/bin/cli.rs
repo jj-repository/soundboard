@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
 use soundboard::{
+    error::Result,
     types::socket::Request,
     utils::daemon::{make_request, wait_for_daemon},
 };
-use std::{error::Error, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -94,7 +95,7 @@ enum SetCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     soundboard::utils::logging::init();
     let cli = Cli::parse();
 
@@ -144,9 +145,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
     };
 
-    let response = make_request(request)
-        .await
-        .map_err(|e| e as Box<dyn Error>)?;
+    let response = make_request(request).await?;
     println!("{} : {}", response.status, response.message);
 
     Ok(())

@@ -1,8 +1,8 @@
+use crate::error::{Result, SoundboardError};
 use crate::utils::config::get_config_path;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    error::Error,
     fs,
     path::PathBuf,
 };
@@ -158,13 +158,13 @@ pub struct DaemonConfig {
 }
 
 impl DaemonConfig {
-    pub fn save_to_file(&self) -> Result<(), Box<dyn Error>> {
+    pub fn save_to_file(&self) -> Result<()> {
         let config_path = get_config_path()?.join("daemon.json");
         let config_dir = config_path.parent().ok_or_else(|| {
-            format!(
-                "Failed to get parent for config path: {}",
+            SoundboardError::Config(format!(
+                "failed to get parent for config path: {}",
                 config_path.display()
-            )
+            ))
         })?;
 
         if !config_dir.exists() {
@@ -176,7 +176,7 @@ impl DaemonConfig {
         Ok(())
     }
 
-    pub fn load_from_file() -> Result<DaemonConfig, Box<dyn Error>> {
+    pub fn load_from_file() -> Result<DaemonConfig> {
         let config_path = get_config_path()?.join("daemon.json");
         let bytes = fs::read(config_path)?;
         Ok(serde_json::from_slice::<DaemonConfig>(&bytes)?)
@@ -251,13 +251,13 @@ impl Default for GuiConfig {
 }
 
 impl GuiConfig {
-    pub fn save_to_file(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn save_to_file(&mut self) -> Result<()> {
         let config_path = get_config_path()?.join("gui.json");
         let config_dir = config_path.parent().ok_or_else(|| {
-            format!(
-                "Failed to get parent for config path: {}",
+            SoundboardError::Config(format!(
+                "failed to get parent for config path: {}",
                 config_path.display()
-            )
+            ))
         })?;
 
         if !config_dir.exists() {
@@ -274,7 +274,7 @@ impl GuiConfig {
         Ok(())
     }
 
-    pub fn load_from_file() -> Result<GuiConfig, Box<dyn Error>> {
+    pub fn load_from_file() -> Result<GuiConfig> {
         let config_path = get_config_path()?.join("gui.json");
         let bytes = fs::read(config_path)?;
         Ok(serde_json::from_slice::<GuiConfig>(&bytes)?)

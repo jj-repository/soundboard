@@ -5,6 +5,7 @@ use crate::{
         pipewire::{create_link, get_all_devices, get_device, invalidate_device_cache},
     },
 };
+use crate::error::{Result, SoundboardError};
 use crate::utils::daemon::get_daemon_config;
 use rodio::{cpal, Decoder, Player, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
@@ -14,7 +15,6 @@ use rodio::cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    error::Error,
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -179,7 +179,7 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub async fn new() -> Result<Self> {
         let daemon_config = get_daemon_config();
         let default_volume = daemon_config.default_volume.unwrap_or(1.0);
         let default_gain = daemon_config.default_gain.unwrap_or(1.0);
@@ -212,7 +212,7 @@ impl AudioPlayer {
                             output_name
                         );
                         (
-                            DeviceSinkBuilder::open_default_sink()?,
+                            DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                             get_default_output_device(),
                         )
                     }
@@ -226,13 +226,13 @@ impl AudioPlayer {
                         match Self::create_stream_for_device(cable_name) {
                             Ok(stream) => (stream, Some(cable_name.clone())),
                             Err(_) => (
-                                DeviceSinkBuilder::open_default_sink()?,
+                                DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                                 get_default_output_device(),
                             ),
                         }
                     } else {
                         (
-                            DeviceSinkBuilder::open_default_sink()?,
+                            DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                             get_default_output_device(),
                         )
                     }
@@ -240,7 +240,7 @@ impl AudioPlayer {
                 #[cfg(not(target_os = "windows"))]
                 {
                     (
-                        DeviceSinkBuilder::open_default_sink()?,
+                        DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                         get_default_output_device(),
                     )
                 }
@@ -313,19 +313,24 @@ impl AudioPlayer {
         Ok(audio_player)
     }
 
-    fn create_stream_for_device(device_name: &str) -> Result<MixerDeviceSink, Box<dyn Error>> {
+    fn create_stream_for_device(device_name: &str) -> Result<MixerDeviceSink> {
         let host = cpal::default_host();
-        let devices = host.output_devices()?;
+        let devices = host
+            .output_devices()
+            .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?;
 
         for device in devices {
             if let Ok(desc) = device.description() {
                 if desc.name() == device_name {
-                    return Ok(DeviceSinkBuilder::from_device(device)?.open_sink_or_fallback()?);
+                    return DeviceSinkBuilder::from_device(device)
+                        .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?
+                        .open_sink_or_fallback()
+                        .map_err(|e| SoundboardError::AudioDevice(e.to_string()));
                 }
             }
         }
 
-        Err(format!("Output device '{}' not found", device_name).into())
+        Err(SoundboardError::DeviceNotFound(device_name.to_string()))
     }
 
     /// On Windows, try to find VB-Audio Virtual Cable output device
@@ -365,7 +370,7 @@ impl AudioPlayer {
     }
 
     #[cfg(target_os = "linux")]
-    async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn link_devices(&mut self) -> Result<()> {
         self.abort_link_thread();
 
         let current_input_name = match &self.current_input_device {
@@ -461,7 +466,7 @@ impl AudioPlayer {
 
     // On Windows, link_devices is a no-op (routing is via output device selection)
     #[cfg(target_os = "windows")]
-    async fn link_devices(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn link_devices(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -566,30 +571,27 @@ impl AudioPlayer {
         self.sink.get_pos().as_secs_f32()
     }
 
-    pub fn seek(&mut self, mut position: f32) -> Result<(), Box<dyn Error>> {
+    pub fn seek(&mut self, mut position: f32) -> Result<()> {
         if position < 0.0 {
             position = 0.0;
         }
 
         self.sink
             .try_seek(Duration::from_secs_f32(position))
-            .map_err(|e| -> Box<dyn Error> { Box::new(e) })
+            .map_err(|e| SoundboardError::Seek(e.to_string()))
     }
 
-    pub fn get_duration(&mut self) -> Result<f32, Box<dyn Error>> {
+    pub fn get_duration(&mut self) -> Result<f32> {
         if self.get_state() == PlayerState::Stopped {
-            Err("Nothing is playing right now".into())
+            Err(SoundboardError::NothingPlaying)
         } else {
-            match self.duration {
-                Some(duration) => Ok(duration),
-                None => Err("Couldn't determine duration for current file".into()),
-            }
+            self.duration.ok_or(SoundboardError::DurationUnknown)
         }
     }
 
-    pub async fn play(&mut self, file_path: &Path) -> Result<(), Box<dyn Error>> {
+    pub async fn play(&mut self, file_path: &Path) -> Result<()> {
         if !file_path.exists() {
-            return Err(format!("File does not exist: {}", file_path.display()).into());
+            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
         }
 
         let file = fs::File::open(file_path)?;
@@ -615,19 +617,19 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(format!(
-                "Failed to decode '{}' (format: {}): {}",
+            Err(err) => Err(SoundboardError::AudioDecode(format!(
+                "failed to decode '{}' (format: {}): {}",
                 file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
                 extension,
                 err
-            ).into()),
+            ))),
         }
     }
 
     /// Preview audio through speakers only (not through virtual mic)
-    pub fn preview(&mut self, file_path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn preview(&mut self, file_path: &Path) -> Result<()> {
         if !file_path.exists() {
-            return Err(format!("File does not exist: {}", file_path.display()).into());
+            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
         }
 
         let file = fs::File::open(file_path)?;
@@ -657,12 +659,12 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(format!(
-                "Failed to decode '{}' (format: {}): {}",
+            Err(err) => Err(SoundboardError::AudioDecode(format!(
+                "failed to decode '{}' (format: {}): {}",
                 file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
                 extension,
                 err
-            ).into()),
+            ))),
         }
     }
 
@@ -674,11 +676,14 @@ impl AudioPlayer {
     }
 
     #[cfg(target_os = "linux")]
-    pub async fn set_current_input_device(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
+    pub async fn set_current_input_device(&mut self, name: &str) -> Result<()> {
         let input_device = get_device(name).await?;
 
         if input_device.device_type != DeviceType::Input {
-            return Err("Selected device is not an input device".into());
+            return Err(SoundboardError::AudioDevice(format!(
+                "selected device is not an input device: {}",
+                name
+            )));
         }
 
         self.current_input_device = Some(input_device);
@@ -689,7 +694,7 @@ impl AudioPlayer {
     }
 
     #[cfg(target_os = "windows")]
-    pub async fn set_current_input_device(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
+    pub async fn set_current_input_device(&mut self, name: &str) -> Result<()> {
         self.current_input_device = Some(name.to_string());
         self.start_mic_passthrough()?;
         self.apply_mic_gain();
@@ -707,7 +712,7 @@ impl AudioPlayer {
 
     /// Start capturing from the selected mic and routing audio through the output mixer
     #[cfg(target_os = "windows")]
-    fn start_mic_passthrough(&mut self) -> Result<(), Box<dyn Error>> {
+    fn start_mic_passthrough(&mut self) -> Result<()> {
         self.stop_mic_passthrough();
 
         let device_name = match &self.current_input_device {
@@ -717,17 +722,21 @@ impl AudioPlayer {
 
         // Find the CPAL input device
         let host = cpal::default_host();
-        let device = host.input_devices()?
+        let device = host
+            .input_devices()
+            .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?
             .find(|d| d.description().map(|desc| desc.name() == device_name).unwrap_or(false))
-            .ok_or_else(|| format!("Input device '{}' not found", device_name))?;
+            .ok_or_else(|| SoundboardError::DeviceNotFound(device_name.clone()))?;
 
-        let supported_config = device.default_input_config()?;
+        let supported_config = device
+            .default_input_config()
+            .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?;
         let sample_rate_hz: u32 = supported_config.sample_rate();
         let sample_rate_nz = std::num::NonZero::<u32>::new(sample_rate_hz)
-            .ok_or("Input device reported a sample rate of 0")?;
+            .ok_or_else(|| SoundboardError::AudioDevice("input device reported sample rate of 0".into()))?;
         let channels: u16 = supported_config.channels();
         let channels_nz = std::num::NonZero::<u16>::new(channels)
-            .ok_or("Input device reported a channel count of 0")?;
+            .ok_or_else(|| SoundboardError::AudioDevice("input device reported channel count of 0".into()))?;
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
 
@@ -810,13 +819,16 @@ impl AudioPlayer {
     }
 
     /// Play a sound on a specific layer
-    pub async fn play_on_layer(&mut self, layer_index: usize, file_path: &Path) -> Result<(), Box<dyn Error>> {
+    pub async fn play_on_layer(&mut self, layer_index: usize, file_path: &Path) -> Result<()> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         if !file_path.exists() {
-            return Err(format!("File does not exist: {}", file_path.display()).into());
+            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
         }
 
         let file = fs::File::open(file_path)?;
@@ -845,20 +857,23 @@ impl AudioPlayer {
 
                 Ok(())
             }
-            Err(err) => Err(format!(
-                "Failed to decode '{}' (format: {}) on layer {}: {}",
+            Err(err) => Err(SoundboardError::AudioDecode(format!(
+                "failed to decode '{}' (format: {}) on layer {}: {}",
                 file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
                 extension,
                 layer_index,
                 err
-            ).into()),
+            ))),
         }
     }
 
     /// Stop playback on a specific layer
-    pub fn stop_layer(&mut self, layer_index: usize) -> Result<(), Box<dyn Error>> {
+    pub fn stop_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         self.layers[layer_index].sink.stop();
@@ -877,9 +892,12 @@ impl AudioPlayer {
     }
 
     /// Pause a specific layer
-    pub fn pause_layer(&mut self, layer_index: usize) -> Result<(), Box<dyn Error>> {
+    pub fn pause_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         self.layers[layer_index].sink.pause();
@@ -887,9 +905,12 @@ impl AudioPlayer {
     }
 
     /// Resume a specific layer
-    pub fn resume_layer(&mut self, layer_index: usize) -> Result<(), Box<dyn Error>> {
+    pub fn resume_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         self.layers[layer_index].sink.play();
@@ -897,9 +918,12 @@ impl AudioPlayer {
     }
 
     /// Set volume for a specific layer (0.0 to 1.0)
-    pub fn set_layer_volume(&mut self, layer_index: usize, volume: f32) -> Result<(), Box<dyn Error>> {
+    pub fn set_layer_volume(&mut self, layer_index: usize, volume: f32) -> Result<()> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         let layer = &mut self.layers[layer_index];
@@ -909,9 +933,12 @@ impl AudioPlayer {
     }
 
     /// Get volume for a specific layer
-    pub fn get_layer_volume(&self, layer_index: usize) -> Result<f32, Box<dyn Error>> {
+    pub fn get_layer_volume(&self, layer_index: usize) -> Result<f32> {
         if layer_index >= self.layers.len() {
-            return Err(format!("Invalid layer index: {}", layer_index).into());
+            return Err(SoundboardError::LayerOutOfRange {
+                index: layer_index,
+                max: self.layers.len(),
+            });
         }
 
         Ok(self.layers[layer_index].volume)

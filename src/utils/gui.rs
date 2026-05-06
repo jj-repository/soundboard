@@ -1,5 +1,6 @@
 use crate::{
     MutexExt,
+    error::{Result, SoundboardError},
     types::{
         audio_player::{LayerInfo, PlayerState},
         config::GuiConfig,
@@ -10,7 +11,6 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    error::Error,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -24,20 +24,13 @@ pub fn get_gui_config() -> GuiConfig {
     })
 }
 
-pub fn make_request_sync(request: Request) -> Result<Response, Box<dyn Error>> {
-    // Try to use the existing runtime if available
+pub fn make_request_sync(request: Request) -> Result<Response> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // We have a runtime - use block_in_place for multi-threaded runtimes
         match handle.runtime_flavor() {
             tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| {
-                    handle
-                        .block_on(make_request(request))
-                        .map_err(|e| -> Box<dyn Error> { e.to_string().into() })
-                })
+                tokio::task::block_in_place(|| handle.block_on(make_request(request)))
             }
             _ => {
-                // For current-thread runtime, use a oneshot channel to get the result
                 let (tx, rx) = std::sync::mpsc::channel();
                 let request_clone = request.clone();
                 std::thread::spawn(move || {
@@ -51,18 +44,15 @@ pub fn make_request_sync(request: Request) -> Result<Response, Box<dyn Error>> {
                     }
                 });
                 rx.recv()
-                    .map_err(|_| "Thread communication failed")?
-                    .map_err(|e| -> Box<dyn Error> { e.into() })
+                    .map_err(|_| SoundboardError::Ipc("thread communication failed".into()))?
+                    .map_err(SoundboardError::Ipc)
             }
         }
     } else {
-        // No runtime available - create a temporary one
-        // This is less efficient but prevents panics
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         rt.block_on(make_request(request))
-            .map_err(|e| -> Box<dyn Error> { e.to_string().into() })
     }
 }
 
