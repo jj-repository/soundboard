@@ -39,8 +39,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
 
-tray-icon = "0.22"
-muda = "0.17"
+tray-icon = { version = "0.23", default-features = false }
+muda = { version = "0.19", default-features = false, features = ["common-controls-v6"] }
 windows = { version = "0.62", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
 # MIDI input (note-on events) and gamepad input (button-press events) for
 # alternate hotkey bindings beyond keyboard/global hotkeys.
