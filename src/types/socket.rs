@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub name: String,
     pub args: HashMap<String, String>,
@@ -170,6 +171,7 @@ impl Request {
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Response {
     pub status: bool,
     pub message: String,
@@ -571,9 +573,11 @@ mod tests {
     }
 
     #[test]
-    fn test_request_extra_fields_ignored() {
+    fn test_request_extra_fields_rejected() {
+        // SEC-08 hardening: deny_unknown_fields means injected fields cause
+        // deserialization to fail rather than silently round-trip.
         let json = r#"{"name":"ping","args":{},"extra":"field"}"#;
-        let request: Request = serde_json::from_str(json).unwrap();
-        assert_eq!(request.name, "ping");
+        let result: Result<Request, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "unknown field must be rejected");
     }
 }

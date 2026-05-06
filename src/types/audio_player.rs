@@ -990,6 +990,7 @@ impl AudioPlayer {
 
 /// Information about an audio layer
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LayerInfo {
     pub index: usize,
     pub is_playing: bool,

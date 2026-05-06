@@ -258,7 +258,10 @@ async fn send_and_receive(
         .map_err(|_| SoundboardError::Ipc("send timeout".into()))?
         .map_err(|e| SoundboardError::Ipc(format!("failed to send request: {e}")))?;
 
-    const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+    // Responses are small JSON blobs (state, paths, device lists). 1 MiB is
+    // already generous; the prior 10 MiB cap let a single length prefix
+    // reserve 10 MiB per call.
+    const MAX_RESPONSE_SIZE: usize = 1024 * 1024;
 
     let mut len_bytes = [0u8; 4];
     timeout(Duration::from_secs(5), stream.read_exact(&mut len_bytes))
