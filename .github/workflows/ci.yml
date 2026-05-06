@@ -17,16 +17,9 @@ jobs:
       - run: cargo fmt --check
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libpipewire-0.3-dev \
-            libclang-dev \
-            libasound2-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -34,19 +27,12 @@ jobs:
       - run: cargo clippy -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     strategy:
       matrix:
         rust: [stable, nightly]
     steps:
       - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libpipewire-0.3-dev \
-            libclang-dev \
-            libasound2-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
