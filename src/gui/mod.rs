@@ -37,51 +37,7 @@ const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "mp3", "wav", "ogg", "flac", "mp4", "m4a", "aac", "mov", "mkv", "webm", "avi", "opus", "wma",
 ];
 
-/// Validates that a path is safely within an allowed base directory.
-/// Returns the canonicalized path if valid, or None if the path escapes the base directory.
-fn validate_path_within(path: &Path, base_dir: &Path) -> Option<PathBuf> {
-    // Canonicalize base directory to resolve symlinks and normalize
-    let canonical_base = match base_dir.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return None,
-    };
-
-    let canonical_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            // If path doesn't exist yet, check the parent directory and construct safe path
-            if let Some(parent) = path.parent() {
-                let canonical_parent = parent.canonicalize().ok()?;
-                if !canonical_parent.starts_with(&canonical_base) {
-                    return None;
-                }
-                // Get just the filename to prevent path traversal via filename
-                let file_name = path.file_name()?;
-                let file_name_str = file_name.to_str()?;
-                // Reject filenames containing path separators or traversal sequences
-                if file_name_str.contains('/') || file_name_str.contains('\\')
-                    || file_name_str.contains('\0') || file_name_str == ".." || file_name_str == "." {
-                    return None;
-                }
-                // Construct safe path: canonical parent + safe filename
-                let safe_path = canonical_parent.join(file_name);
-                // Double-check the result is still within base
-                if !safe_path.starts_with(&canonical_base) {
-                    return None;
-                }
-                return Some(safe_path);
-            }
-            return None;
-        }
-    };
-
-    // Check if the canonical path is within the base directory
-    if canonical_path.starts_with(&canonical_base) {
-        Some(canonical_path)
-    } else {
-        None
-    }
-}
+use soundboard::utils::path::validate_path_within;
 
 struct SoundpadGui {
     pub app_state: AppState,

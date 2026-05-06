@@ -1,58 +1,5 @@
 use crate::types::{commands::*, socket::Request};
-
-use std::path::PathBuf;
-
-/// Supported audio file extensions
-const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus"];
-
-/// Validates that a file path is safe and points to a valid audio file.
-/// Returns None if the path is invalid or potentially malicious.
-fn validate_audio_path(path_str: &str) -> Option<PathBuf> {
-    if path_str.is_empty() {
-        return None;
-    }
-
-    // Security: Reject paths with null bytes
-    if path_str.contains('\0') {
-        return None;
-    }
-
-    let path = PathBuf::from(path_str);
-
-    // Security: Canonicalize to resolve symlinks and ../ sequences
-    let canonical = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return None, // File doesn't exist or permission denied
-    };
-
-    // Security (Windows): reject NTFS Alternate Data Streams (foo.wav:evil.exe).
-    // `canonicalize` leaves ':' only in the drive-letter prefix (e.g. C:\),
-    // any colon beyond that is an ADS selector.
-    #[cfg(target_os = "windows")]
-    {
-        let s = canonical.to_string_lossy();
-        // Skip the drive letter colon (index 1), if present.
-        let tail_has_colon = s.char_indices().skip(2).any(|(_, c)| c == ':');
-        if tail_has_colon {
-            return None;
-        }
-    }
-
-    // Verify it's a file, not a directory
-    if !canonical.is_file() {
-        return None;
-    }
-
-    // Verify it has a supported audio extension
-    if let Some(ext) = canonical.extension() {
-        let ext_lower = ext.to_string_lossy().to_lowercase();
-        if SUPPORTED_AUDIO_EXTENSIONS.contains(&ext_lower.as_str()) {
-            return Some(canonical);
-        }
-    }
-
-    None
-}
+use crate::utils::path::validate_audio_path;
 
 pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
     match request.name.as_str() {
@@ -195,6 +142,7 @@ pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::path::SUPPORTED_AUDIO_EXTENSIONS;
     use std::fs::{self, File};
     use tempfile::TempDir;
 

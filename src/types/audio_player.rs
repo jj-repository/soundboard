@@ -7,6 +7,7 @@ use crate::{
 };
 use crate::error::{Result, SoundboardError};
 use crate::utils::daemon::get_daemon_config;
+use crate::utils::path::has_supported_audio_extension;
 use rodio::{cpal, Decoder, Player, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
@@ -100,6 +101,22 @@ impl AudioLayer {
 
 /// Number of audio layers available for mixing
 pub const NUM_AUDIO_LAYERS: usize = 4;
+
+/// Defense-in-depth validation for paths handed to the player. The IPC parser
+/// already runs `validate_audio_path`, but the player API can be reached from
+/// anywhere in the binary (looped playback in daemon, future GUI direct
+/// hooks), so re-check here.
+fn validate_audio_file(file_path: &Path) -> Result<()> {
+    let meta = std::fs::symlink_metadata(file_path)
+        .map_err(|_| SoundboardError::FileNotFound(file_path.to_path_buf()))?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(SoundboardError::PathNotAllowed(file_path.to_path_buf()));
+    }
+    if !has_supported_audio_extension(file_path) {
+        return Err(SoundboardError::PathNotAllowed(file_path.to_path_buf()));
+    }
+    Ok(())
+}
 
 /// Maximum gain multiplier for main audio output (5x = +14dB)
 pub const MAX_GAIN: f32 = 5.0;
@@ -590,10 +607,7 @@ impl AudioPlayer {
     }
 
     pub async fn play(&mut self, file_path: &Path) -> Result<()> {
-        if !file_path.exists() {
-            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
-        }
-
+        validate_audio_file(file_path)?;
         let file = fs::File::open(file_path)?;
         let extension = file_path
             .extension()
@@ -628,10 +642,7 @@ impl AudioPlayer {
 
     /// Preview audio through speakers only (not through virtual mic)
     pub fn preview(&mut self, file_path: &Path) -> Result<()> {
-        if !file_path.exists() {
-            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
-        }
-
+        validate_audio_file(file_path)?;
         let file = fs::File::open(file_path)?;
         let extension = file_path
             .extension()
@@ -827,10 +838,7 @@ impl AudioPlayer {
             });
         }
 
-        if !file_path.exists() {
-            return Err(SoundboardError::FileNotFound(file_path.to_path_buf()));
-        }
-
+        validate_audio_file(file_path)?;
         let file = fs::File::open(file_path)?;
         let extension = file_path
             .extension()
