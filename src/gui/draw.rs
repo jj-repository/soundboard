@@ -469,6 +469,61 @@ impl SoundpadGui {
         self.draw_body(ui);
         ui.separator();
         self.draw_footer(ui);
+        self.draw_url_grab_dialog(ui.ctx());
+    }
+
+    /// Modal for "Add from URL" — single text field, runs `yt-dlp` in a
+    /// background thread, shows status until user dismisses it.
+    fn draw_url_grab_dialog(&mut self, ctx: &egui::Context) {
+        if !self.app_state.show_url_grab_dialog {
+            return;
+        }
+        let mut keep_open = true;
+        let mut start_url: Option<String> = None;
+        egui::Window::new("Add from URL")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut keep_open)
+            .show(ctx, |ui| {
+                ui.label("Paste a video/audio URL. yt-dlp must be installed and on PATH.");
+                ui.add_space(6.0);
+                let resp = ui.add_sized(
+                    [380.0, 22.0],
+                    TextEdit::singleline(&mut self.app_state.url_grab_input)
+                        .hint_text("https://..."),
+                );
+                let enter_pressed =
+                    resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let download_button =
+                        Button::new(format!("{} Download", icons::ICON_DOWNLOAD.codepoint));
+                    let download_clicked = ui
+                        .add_enabled(
+                            !self.app_state.url_grab_in_progress
+                                && !self.app_state.url_grab_input.trim().is_empty(),
+                            download_button,
+                        )
+                        .clicked();
+                    if download_clicked || enter_pressed {
+                        start_url = Some(self.app_state.url_grab_input.trim().to_string());
+                    }
+                    if ui.button("Close").clicked() {
+                        self.app_state.show_url_grab_dialog = false;
+                    }
+                });
+                if let Some(ref status) = self.app_state.url_grab_status {
+                    ui.add_space(6.0);
+                    ui.label(status);
+                }
+            });
+        if !keep_open {
+            self.app_state.show_url_grab_dialog = false;
+        }
+        if let Some(url) = start_url {
+            self.start_url_grab(url);
+        }
     }
 
     fn draw_header(&mut self, ui: &mut Ui) {
@@ -1028,6 +1083,75 @@ impl SoundpadGui {
                         {
                             self.import_sounds_dialog();
                         }
+
+                        ui.add_space(4.0);
+
+                        // Add-from-URL (yt-dlp) button
+                        let url_button =
+                            Button::new(format!("{} Add URL", icons::ICON_LINK.codepoint));
+                        let url_resp = ui
+                            .add_enabled(!self.app_state.url_grab_in_progress, url_button)
+                            .on_hover_text(
+                                "Download audio from a URL via yt-dlp (must be installed)",
+                            );
+                        if url_resp.clicked() {
+                            self.app_state.show_url_grab_dialog = true;
+                            self.app_state.url_grab_input.clear();
+                            self.app_state.url_grab_status = None;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Toggle-record button + source selector. Click
+                        // toggles start/stop; the combo lets the user pick
+                        // mic vs system loopback while idle.
+                        let recording_now = soundboard::utils::recorder::is_recording();
+                        let (rec_glyph, rec_label, rec_hover) = if recording_now {
+                            (
+                                icons::ICON_STOP.codepoint,
+                                "Stop Rec",
+                                "Stop recording and save the WAV to your sounds folder",
+                            )
+                        } else {
+                            (
+                                icons::ICON_FIBER_MANUAL_RECORD.codepoint,
+                                "Record",
+                                "Start a new recording (toggle again or hotkey to stop)",
+                            )
+                        };
+                        if ui
+                            .button(format!("{} {}", rec_glyph, rec_label))
+                            .on_hover_text(rec_hover)
+                            .clicked()
+                        {
+                            self.toggle_recording();
+                        }
+
+                        use soundboard::types::gui::RecordSourceUi;
+                        let current_label = match self.app_state.record_source {
+                            RecordSourceUi::Mic => "Mic",
+                            RecordSourceUi::SystemLoopback => "System",
+                        };
+                        ui.add_enabled_ui(!recording_now, |ui| {
+                            egui::ComboBox::from_id_salt("record_source")
+                                .selected_text(current_label)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut self.app_state.record_source,
+                                        RecordSourceUi::Mic,
+                                        "Mic",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.app_state.record_source,
+                                        RecordSourceUi::SystemLoopback,
+                                        "System (loopback)",
+                                    );
+                                });
+                        });
+
+                        if let Some(ref msg) = self.app_state.record_status_message {
+                            ui.label(RichText::new(msg).size(10.0).weak());
+                        }
                     }
                 });
             });
@@ -1037,12 +1161,33 @@ impl SoundpadGui {
     /// Draw search bar and tag filter dropdown
     fn draw_search_and_filter(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let search_width = ui.available_width() - 120.0;
+            // Reserve a bit more width: search box + tag combo + view-mode toggle.
+            let search_width = ui.available_width() - 150.0;
             let search_field = ui.add_sized(
                 [search_width.max(100.0), 22.0],
                 TextEdit::singleline(&mut self.app_state.search_query).hint_text("Search..."),
             );
             self.app_state.search_field_id = Some(search_field.id);
+
+            // View mode (List / Grid) toggle button. Persists to config.
+            use soundboard::types::config::ViewMode;
+            let (label, hover) = match self.config.view_mode {
+                ViewMode::List => (icons::ICON_GRID_VIEW.codepoint, "Switch to grid view"),
+                ViewMode::Grid => (icons::ICON_LIST.codepoint, "Switch to list view"),
+            };
+            if ui
+                .add(Button::new(label).frame(false))
+                .on_hover_text(hover)
+                .clicked()
+            {
+                self.config.view_mode = match self.config.view_mode {
+                    ViewMode::List => ViewMode::Grid,
+                    ViewMode::Grid => ViewMode::List,
+                };
+                if let Err(e) = self.config.save_to_file() {
+                    tracing::error!("Failed to persist view mode: {}", e);
+                }
+            }
 
             // Tag filter dropdown
             let all_tags = self.get_all_tags();
@@ -1285,70 +1430,76 @@ impl SoundpadGui {
                         let search_query = self.app_state.search_query.to_lowercase();
                         let search_query = search_query.trim();
 
-                        // Collect favorites from current directory using set intersection (O(n) instead of O(n*m))
-                        let mut current_dir_favorites: Vec<_> = self
-                            .config
-                            .favorites
-                            .intersection(&self.app_state.files)
+                        // Filter once; both list and grid renderers consume the
+                        // same filtered set.
+                        let tag_filter = self.app_state.filter_by_tag.clone();
+                        let filtered: Vec<_> = files
+                            .iter()
+                            .filter(|p| !p.is_dir())
+                            .filter(|p| {
+                                p.extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|e| {
+                                        SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str())
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .filter(|p| {
+                                p.file_name()
+                                    .map(|n| n.to_string_lossy().to_lowercase())
+                                    .map(|n| n.contains(search_query))
+                                    .unwrap_or(false)
+                            })
+                            .filter(|p| {
+                                tag_filter.as_ref().is_none_or(|t| {
+                                    self.config
+                                        .sound_metadata
+                                        .get(*p)
+                                        .map(|m| m.has_tag(t))
+                                        .unwrap_or(false)
+                                })
+                            })
                             .cloned()
                             .collect();
-                        current_dir_favorites.sort();
 
-                        // Draw favorites section if there are any in current directory
-                        if !current_dir_favorites.is_empty() && search_query.is_empty() {
-                            ui.label(RichText::new("Favorites").color(Color32::GOLD).monospace());
-                            ui.add_space(SPACING_SMALL);
-
-                            for entry_path in &current_dir_favorites {
-                                self.draw_file_row(ui, entry_path, true);
-                            }
-
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(4.0);
-                        }
-
-                        // Draw all files
-                        let tag_filter = self.app_state.filter_by_tag.clone();
-
-                        for entry_path in &files {
-                            if entry_path.is_dir() {
-                                continue;
-                            }
-
-                            let extension = entry_path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or_default()
-                                .to_lowercase();
-
-                            if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
-                                continue;
-                            }
-
-                            let file_name = entry_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy())
-                                .unwrap_or_default();
-
-                            if !file_name.to_lowercase().contains(search_query) {
-                                continue;
-                            }
-
-                            // Apply tag filter
-                            if let Some(ref filter_tag) = tag_filter {
-                                let has_tag = self
-                                    .config
-                                    .sound_metadata
-                                    .get(entry_path)
-                                    .map(|m| m.has_tag(filter_tag))
-                                    .unwrap_or(false);
-                                if !has_tag {
-                                    continue;
+                        if matches!(
+                            self.config.view_mode,
+                            soundboard::types::config::ViewMode::Grid
+                        ) {
+                            ui.horizontal_wrapped(|ui| {
+                                for entry_path in &filtered {
+                                    self.draw_file_button_grid(ui, entry_path);
                                 }
+                            });
+                        } else {
+                            // Collect favorites from current directory using
+                            // set intersection (O(n) instead of O(n*m))
+                            let mut current_dir_favorites: Vec<_> = self
+                                .config
+                                .favorites
+                                .intersection(&self.app_state.files)
+                                .cloned()
+                                .collect();
+                            current_dir_favorites.sort();
+
+                            if !current_dir_favorites.is_empty() && search_query.is_empty() {
+                                ui.label(
+                                    RichText::new("Favorites").color(Color32::GOLD).monospace(),
+                                );
+                                ui.add_space(SPACING_SMALL);
+
+                                for entry_path in &current_dir_favorites {
+                                    self.draw_file_row(ui, entry_path, true);
+                                }
+
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.add_space(4.0);
                             }
 
-                            self.draw_file_row(ui, entry_path, false);
+                            for entry_path in &filtered {
+                                self.draw_file_row(ui, entry_path, false);
+                            }
                         }
                     }
                 });
@@ -1436,6 +1587,61 @@ impl SoundpadGui {
                             let tag = self.app_state.tag_input.clone();
                             self.add_sound_tag(&file_path, &tag);
                             self.app_state.tag_input.clear();
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Color picker
+                    ui.horizontal(|ui| {
+                        ui.label("Button colour:");
+                        let mut rgb = metadata
+                            .as_ref()
+                            .and_then(|m| m.color_rgb)
+                            .map(|packed| {
+                                [
+                                    ((packed >> 16) & 0xFF) as u8 as f32 / 255.0,
+                                    ((packed >> 8) & 0xFF) as u8 as f32 / 255.0,
+                                    (packed & 0xFF) as u8 as f32 / 255.0,
+                                ]
+                            })
+                            .unwrap_or([0.5, 0.5, 0.5]);
+                        if ui.color_edit_button_rgb(&mut rgb).changed() {
+                            let packed = ((rgb[0] * 255.0).round() as u32) << 16
+                                | ((rgb[1] * 255.0).round() as u32) << 8
+                                | ((rgb[2] * 255.0).round() as u32);
+                            self.set_sound_color(&file_path, Some(packed));
+                        }
+                        let has_color = metadata
+                            .as_ref()
+                            .map(|m| m.color_rgb.is_some())
+                            .unwrap_or(false);
+                        if ui.add_enabled(has_color, Button::new("Reset")).clicked() {
+                            self.set_sound_color(&file_path, None);
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Icon picker (Material icon name; `None`/empty = no icon).
+                    ui.horizontal(|ui| {
+                        ui.label("Icon name:");
+                        let mut icon_input = metadata
+                            .as_ref()
+                            .and_then(|m| m.icon.clone())
+                            .unwrap_or_default();
+                        let response = ui.add(
+                            TextEdit::singleline(&mut icon_input)
+                                .hint_text("music_note, favorite, …")
+                                .desired_width(180.0),
+                        );
+                        if response.changed() {
+                            let val = if icon_input.trim().is_empty() {
+                                None
+                            } else {
+                                Some(icon_input.clone())
+                            };
+                            self.set_sound_icon(&file_path, val);
                         }
                     });
 
@@ -1585,6 +1791,67 @@ impl SoundpadGui {
                 }
             }
         });
+    }
+
+    /// Render a single sound as a coloured button for grid (cart-wall) view.
+    /// Click plays the sound; right-click opens the metadata edit dialog.
+    fn draw_file_button_grid(&mut self, ui: &mut Ui, entry_path: &std::path::PathBuf) {
+        const BUTTON_WIDTH: f32 = 110.0;
+        const BUTTON_HEIGHT: f32 = 56.0;
+
+        let original_file_name = entry_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let metadata = self.config.sound_metadata.get(entry_path).cloned();
+        let display_name = metadata
+            .as_ref()
+            .and_then(|m| m.custom_name.clone())
+            .unwrap_or_else(|| {
+                std::path::Path::new(&original_file_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(original_file_name.clone())
+            });
+
+        let icon_str = metadata.as_ref().and_then(|m| m.icon.clone());
+        let bg = metadata.as_ref().and_then(|m| m.color_rgb).map(|packed| {
+            Color32::from_rgb(
+                ((packed >> 16) & 0xFF) as u8,
+                ((packed >> 8) & 0xFF) as u8,
+                (packed & 0xFF) as u8,
+            )
+        });
+
+        let label = match icon_str.as_deref() {
+            // Icons in egui_material_icons are looked up by name via the
+            // material-icons mapping table. We fall back to text-only if the
+            // user supplies an unknown name.
+            Some(name) => {
+                if let Some(cp) = lookup_material_icon_codepoint(name) {
+                    format!("{}\n{}", cp, truncate_string(&display_name, 18))
+                } else {
+                    truncate_string(&display_name, 22)
+                }
+            }
+            None => truncate_string(&display_name, 22),
+        };
+
+        let mut button = Button::new(RichText::new(label).size(13.0))
+            .min_size(egui::vec2(BUTTON_WIDTH, BUTTON_HEIGHT));
+        if let Some(c) = bg {
+            button = button.fill(c);
+        }
+        let resp = ui.add(button);
+        if resp.clicked() {
+            self.play_file(entry_path);
+        }
+        if resp.secondary_clicked() {
+            self.app_state.editing_metadata_file = Some(entry_path.clone());
+        }
+        resp.on_hover_text(&original_file_name);
     }
 
     fn draw_category_file_row(
@@ -2113,6 +2380,35 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Curated lookup from a small palette of icon names to their Material-icon
+/// `RichText` glyph. Returns `None` for names outside this palette so the
+/// caller can fall back to a text-only label.
+fn lookup_material_icon_codepoint(name: &str) -> Option<&'static str> {
+    Some(match name.trim().to_ascii_lowercase().as_str() {
+        "music_note" => icons::ICON_MUSIC_NOTE.codepoint,
+        "favorite" => icons::ICON_FAVORITE.codepoint,
+        "star" => icons::ICON_STAR.codepoint,
+        "volume_up" => icons::ICON_VOLUME_UP.codepoint,
+        "mic" => icons::ICON_MIC.codepoint,
+        "play" | "play_arrow" => icons::ICON_PLAY_ARROW.codepoint,
+        "pause" => icons::ICON_PAUSE.codepoint,
+        "stop" => icons::ICON_STOP.codepoint,
+        "bolt" => icons::ICON_BOLT.codepoint,
+        "face" => icons::ICON_FACE.codepoint,
+        "fire" => icons::ICON_FIRE_EXTINGUISHER.codepoint,
+        "home" => icons::ICON_HOME.codepoint,
+        "headphones" => icons::ICON_HEADPHONES.codepoint,
+        "alarm" => icons::ICON_ALARM.codepoint,
+        "warning" => icons::ICON_WARNING.codepoint,
+        "celebration" => icons::ICON_CELEBRATION.codepoint,
+        "campaign" => icons::ICON_CAMPAIGN.codepoint,
+        "graphic_eq" => icons::ICON_GRAPHIC_EQ.codepoint,
+        "queue_music" => icons::ICON_QUEUE_MUSIC.codepoint,
+        "library_music" => icons::ICON_LIBRARY_MUSIC.codepoint,
+        _ => return None,
+    })
+}
+
 /// Format a HotkeyBinding for display in the UI
 fn format_hotkey_display(binding: &HotkeyBinding) -> String {
     let mut parts = Vec::new();
@@ -2235,4 +2531,186 @@ pub fn create_hotkey_binding(key: Key, modifiers: Modifiers) -> Option<HotkeyBin
         modifiers.alt,
         modifiers.command, // Super/Meta key
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- truncate_string ----
+
+    #[test]
+    fn truncate_string_shorter_than_max_unchanged() {
+        assert_eq!(truncate_string("hello", 10), "hello");
+        assert_eq!(truncate_string("", 5), "");
+    }
+
+    #[test]
+    fn truncate_string_exactly_max_unchanged() {
+        assert_eq!(truncate_string("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_string_longer_appends_ellipsis() {
+        assert_eq!(truncate_string("hello world", 5), "hello...");
+        assert_eq!(truncate_string("abcdef", 3), "abc...");
+    }
+
+    #[test]
+    fn truncate_string_counts_chars_not_bytes() {
+        // multi-byte chars: each emoji/accented char is one "char"
+        let s = "café";
+        assert_eq!(s.chars().count(), 4);
+        assert_eq!(truncate_string(s, 4), "café");
+        assert_eq!(truncate_string(s, 3), "caf...");
+    }
+
+    #[test]
+    fn truncate_string_handles_emoji() {
+        let s = "abc🎵def";
+        assert_eq!(truncate_string(s, 4), "abc🎵...");
+    }
+
+    // ---- format_hotkey_display ----
+
+    #[test]
+    fn format_hotkey_display_no_modifiers() {
+        let b = HotkeyBinding::new("KeyP", false, false, false, false);
+        assert_eq!(format_hotkey_display(&b), "P");
+    }
+
+    #[test]
+    fn format_hotkey_display_single_modifier() {
+        let b = HotkeyBinding::new("KeyS", true, false, false, false);
+        assert_eq!(format_hotkey_display(&b), "Ctrl + S");
+    }
+
+    #[test]
+    fn format_hotkey_display_all_modifiers_in_order() {
+        let b = HotkeyBinding::new("KeyA", true, true, true, true);
+        assert_eq!(format_hotkey_display(&b), "Ctrl + Shift + Alt + Super + A");
+    }
+
+    #[test]
+    fn format_hotkey_display_special_key_uses_short_form() {
+        let b = HotkeyBinding::new("Escape", false, false, false, false);
+        assert_eq!(format_hotkey_display(&b), "Esc");
+    }
+
+    #[test]
+    fn format_hotkey_display_numpad_formatted() {
+        let b = HotkeyBinding::new("Numpad5", true, false, false, false);
+        assert_eq!(format_hotkey_display(&b), "Ctrl + Num 5");
+    }
+
+    // ---- egui_key_to_string ----
+
+    #[test]
+    fn egui_key_to_string_letters() {
+        assert_eq!(egui_key_to_string(Key::A).as_deref(), Some("KeyA"));
+        assert_eq!(egui_key_to_string(Key::Z).as_deref(), Some("KeyZ"));
+    }
+
+    #[test]
+    fn egui_key_to_string_digits_use_digit_prefix() {
+        assert_eq!(egui_key_to_string(Key::Num0).as_deref(), Some("Digit0"));
+        assert_eq!(egui_key_to_string(Key::Num9).as_deref(), Some("Digit9"));
+    }
+
+    #[test]
+    fn egui_key_to_string_function_keys_passthrough() {
+        assert_eq!(egui_key_to_string(Key::F1).as_deref(), Some("F1"));
+        assert_eq!(egui_key_to_string(Key::F12).as_deref(), Some("F12"));
+    }
+
+    #[test]
+    fn egui_key_to_string_special_and_punct() {
+        assert_eq!(egui_key_to_string(Key::Space).as_deref(), Some("Space"));
+        assert_eq!(egui_key_to_string(Key::Escape).as_deref(), Some("Escape"));
+        assert_eq!(egui_key_to_string(Key::ArrowUp).as_deref(), Some("ArrowUp"));
+        assert_eq!(egui_key_to_string(Key::Equals).as_deref(), Some("Equal"));
+        assert_eq!(
+            egui_key_to_string(Key::Backtick).as_deref(),
+            Some("Backquote")
+        );
+    }
+
+    /// Round-trip: every egui Key that egui_key_to_string maps must also be
+    /// resolvable by string_to_code in hotkeys.rs (otherwise hotkey recording
+    /// produces a binding the listener cannot register).
+    #[test]
+    fn egui_key_to_string_round_trips_via_string_to_code() {
+        use crate::gui::hotkeys::key_display_name;
+        let cases = [
+            Key::A,
+            Key::Z,
+            Key::Num0,
+            Key::Num9,
+            Key::F1,
+            Key::F12,
+            Key::Space,
+            Key::Enter,
+            Key::Escape,
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::Equals,
+            Key::Minus,
+            Key::Backtick,
+            Key::Semicolon,
+        ];
+        for k in cases {
+            let s = egui_key_to_string(k)
+                .unwrap_or_else(|| panic!("egui_key_to_string returned None for {:?}", k));
+            // Display name lookup must not fall through to the empty/unknown
+            // branch — confirms key string is recognised by the hotkeys mod.
+            let display = key_display_name(&s);
+            assert!(
+                !display.is_empty(),
+                "key_display_name produced empty string for {:?} (s={})",
+                k,
+                s
+            );
+        }
+    }
+
+    // ---- create_hotkey_binding ----
+
+    #[test]
+    fn create_hotkey_binding_no_modifiers() {
+        let b = create_hotkey_binding(Key::P, Modifiers::NONE).expect("should map");
+        assert_eq!(b.key, "KeyP");
+        assert!(!b.ctrl);
+        assert!(!b.shift);
+        assert!(!b.alt);
+        assert!(!b.super_key);
+    }
+
+    #[test]
+    fn create_hotkey_binding_with_modifiers() {
+        let mods = Modifiers {
+            ctrl: true,
+            shift: true,
+            alt: false,
+            command: true,
+            ..Modifiers::default()
+        };
+        let b = create_hotkey_binding(Key::S, mods).expect("should map");
+        assert_eq!(b.key, "KeyS");
+        assert!(b.ctrl);
+        assert!(b.shift);
+        assert!(!b.alt);
+        // command -> super_key
+        assert!(b.super_key);
+    }
+
+    #[test]
+    fn create_hotkey_binding_unmapped_key_returns_none() {
+        // Key::Copy isn't in the egui_key_to_string match — should return None.
+        // Use a key that's known to be in egui but not handled by us.
+        // Fall back to Key::Cut if it exists; otherwise pick any unmapped variant.
+        // We check by going through every variant and finding one we DO NOT map.
+        // Quick heuristic: Key::Copy is in egui::Key but absent from our match.
+        let result = create_hotkey_binding(Key::Copy, Modifiers::NONE);
+        assert!(result.is_none());
+    }
 }

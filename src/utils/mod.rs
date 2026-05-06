@@ -1,3 +1,4 @@
+pub mod auto_ptt;
 pub mod cli_run;
 pub mod commands;
 pub mod config;
@@ -6,5 +7,7 @@ pub mod daemon_run;
 pub mod gui;
 pub mod logging;
 pub mod path;
+pub mod recorder;
 pub mod updater;
 pub mod vbcable_install;
+pub mod yt_grab;

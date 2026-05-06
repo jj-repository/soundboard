@@ -17,15 +17,23 @@ mod tests {
 
         match result {
             Ok(path) => {
-                assert!(path.ends_with("soundboard"), "Config path should end with 'soundboard'");
-                assert!(path.to_string_lossy().contains("config") ||
-                        path.to_string_lossy().contains(".config") ||
-                        path.to_string_lossy().contains("AppData"),
-                        "Config path should be in a config directory");
+                assert!(
+                    path.ends_with("soundboard"),
+                    "Config path should end with 'soundboard'"
+                );
+                assert!(
+                    path.to_string_lossy().contains("config")
+                        || path.to_string_lossy().contains(".config")
+                        || path.to_string_lossy().contains("AppData"),
+                    "Config path should be in a config directory"
+                );
             }
             Err(e) => {
-                assert!(matches!(e, SoundboardError::ConfigDirUnavailable),
-                        "Expected ConfigDirUnavailable, got {:?}", e);
+                assert!(
+                    matches!(e, SoundboardError::ConfigDirUnavailable),
+                    "Expected ConfigDirUnavailable, got {:?}",
+                    e
+                );
             }
         }
     }
@@ -40,7 +48,10 @@ mod tests {
     #[test]
     fn test_get_config_path_consistent() {
         if let (Ok(path1), Ok(path2)) = (get_config_path(), get_config_path()) {
-            assert_eq!(path1, path2, "Config path should be consistent across calls");
+            assert_eq!(
+                path1, path2,
+                "Config path should be consistent across calls"
+            );
         }
     }
 }

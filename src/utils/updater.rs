@@ -58,9 +58,13 @@ pub struct UpdateInfo {
 pub async fn check_for_updates() -> Result<UpdateInfo> {
     let client = Client::builder()
         .user_agent("soundboard-updater")
+        .https_only(true)
         .build()?;
 
-    let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
 
     let response = client.get(&url).send().await?;
 
@@ -153,14 +157,16 @@ pub async fn download_update(
 
     let client = Client::builder()
         .user_agent("soundboard-updater")
+        .https_only(true)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() > 5 {
                 return attempt.error("too many redirects");
             }
             match attempt.url().host_str() {
-                Some(host) if ALLOWED_DOWNLOAD_HOSTS
-                    .iter()
-                    .any(|h| host.eq_ignore_ascii_case(h)) =>
+                Some(host)
+                    if ALLOWED_DOWNLOAD_HOSTS
+                        .iter()
+                        .any(|h| host.eq_ignore_ascii_case(h)) =>
                 {
                     attempt.follow()
                 }
@@ -250,7 +256,9 @@ pub async fn download_update(
                 return Err(e);
             }
         }
-        Ok(sha_response) if sha_response.status() == reqwest::StatusCode::NOT_FOUND && allow_skip => {
+        Ok(sha_response)
+            if sha_response.status() == reqwest::StatusCode::NOT_FOUND && allow_skip =>
+        {
             tracing::error!(
                 "WARNING: SHA-256 sidecar missing for update. Skipping verification because \
                  SOUNDBOARD_UPDATE_SKIP_CHECKSUM=1 was set."

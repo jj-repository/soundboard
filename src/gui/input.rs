@@ -1,5 +1,5 @@
-use crate::gui::{SoundpadGui, SUPPORTED_EXTENSIONS};
 use crate::gui::draw::create_hotkey_binding;
+use crate::gui::{SoundpadGui, SUPPORTED_EXTENSIONS};
 use egui::{Context, Key};
 use soundboard::types::gui::HotkeyRecording;
 use std::path::PathBuf;
@@ -23,19 +23,79 @@ impl SoundpadGui {
 
                 // Look for a key press (non-modifier)
                 for key in [
-                    Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I,
-                    Key::J, Key::K, Key::L, Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R,
-                    Key::S, Key::T, Key::U, Key::V, Key::W, Key::X, Key::Y, Key::Z,
-                    Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4,
-                    Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9,
-                    Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6,
-                    Key::F7, Key::F8, Key::F9, Key::F10, Key::F11, Key::F12,
-                    Key::Space, Key::Enter, Key::Backspace, Key::Tab, Key::Delete,
-                    Key::Insert, Key::Home, Key::End, Key::PageUp, Key::PageDown,
-                    Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft, Key::ArrowRight,
-                    Key::Minus, Key::Equals, Key::OpenBracket, Key::CloseBracket,
-                    Key::Backslash, Key::Semicolon, Key::Quote, Key::Comma,
-                    Key::Period, Key::Slash, Key::Backtick,
+                    Key::A,
+                    Key::B,
+                    Key::C,
+                    Key::D,
+                    Key::E,
+                    Key::F,
+                    Key::G,
+                    Key::H,
+                    Key::I,
+                    Key::J,
+                    Key::K,
+                    Key::L,
+                    Key::M,
+                    Key::N,
+                    Key::O,
+                    Key::P,
+                    Key::Q,
+                    Key::R,
+                    Key::S,
+                    Key::T,
+                    Key::U,
+                    Key::V,
+                    Key::W,
+                    Key::X,
+                    Key::Y,
+                    Key::Z,
+                    Key::Num0,
+                    Key::Num1,
+                    Key::Num2,
+                    Key::Num3,
+                    Key::Num4,
+                    Key::Num5,
+                    Key::Num6,
+                    Key::Num7,
+                    Key::Num8,
+                    Key::Num9,
+                    Key::F1,
+                    Key::F2,
+                    Key::F3,
+                    Key::F4,
+                    Key::F5,
+                    Key::F6,
+                    Key::F7,
+                    Key::F8,
+                    Key::F9,
+                    Key::F10,
+                    Key::F11,
+                    Key::F12,
+                    Key::Space,
+                    Key::Enter,
+                    Key::Backspace,
+                    Key::Tab,
+                    Key::Delete,
+                    Key::Insert,
+                    Key::Home,
+                    Key::End,
+                    Key::PageUp,
+                    Key::PageDown,
+                    Key::ArrowUp,
+                    Key::ArrowDown,
+                    Key::ArrowLeft,
+                    Key::ArrowRight,
+                    Key::Minus,
+                    Key::Equals,
+                    Key::OpenBracket,
+                    Key::CloseBracket,
+                    Key::Backslash,
+                    Key::Semicolon,
+                    Key::Quote,
+                    Key::Comma,
+                    Key::Period,
+                    Key::Slash,
+                    Key::Backtick,
                 ] {
                     if i.key_pressed(key) {
                         recorded_binding = create_hotkey_binding(key, i.modifiers);
@@ -192,4 +252,46 @@ fn wrap_index(idx: isize, len: usize) -> usize {
     }
     let len = len as isize;
     ((idx % len + len) % len) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_index;
+
+    #[test]
+    fn wrap_index_zero_len_returns_zero() {
+        assert_eq!(wrap_index(0, 0), 0);
+        assert_eq!(wrap_index(-5, 0), 0);
+        assert_eq!(wrap_index(99, 0), 0);
+    }
+
+    #[test]
+    fn wrap_index_in_range_passes_through() {
+        assert_eq!(wrap_index(0, 5), 0);
+        assert_eq!(wrap_index(3, 5), 3);
+        assert_eq!(wrap_index(4, 5), 4);
+    }
+
+    #[test]
+    fn wrap_index_positive_overflow_wraps() {
+        assert_eq!(wrap_index(5, 5), 0);
+        assert_eq!(wrap_index(6, 5), 1);
+        assert_eq!(wrap_index(10, 5), 0);
+        assert_eq!(wrap_index(11, 5), 1);
+    }
+
+    #[test]
+    fn wrap_index_negative_wraps_to_end() {
+        assert_eq!(wrap_index(-1, 5), 4);
+        assert_eq!(wrap_index(-2, 5), 3);
+        assert_eq!(wrap_index(-5, 5), 0);
+        assert_eq!(wrap_index(-6, 5), 4);
+    }
+
+    #[test]
+    fn wrap_index_len_one() {
+        assert_eq!(wrap_index(0, 1), 0);
+        assert_eq!(wrap_index(-1, 1), 0);
+        assert_eq!(wrap_index(123, 1), 0);
+    }
 }

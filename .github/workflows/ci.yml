@@ -30,7 +30,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        rust: [stable, nightly]
+        rust: [stable, nightly, "1.89"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

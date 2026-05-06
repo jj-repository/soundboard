@@ -82,6 +82,7 @@ impl DaemonCommand {
             DaemonCommand::Stop => {
                 let mut p = get_audio_player().lock().await;
                 p.stop();
+                p.stop_all_layers();
                 Response::new(true, "Audio was stopped")
             }
 
@@ -175,10 +176,8 @@ impl DaemonCommand {
             }
             DaemonCommand::GetAllInputs => {
                 let devices = crate::types::audio_player::get_input_devices();
-                let mut entries: Vec<String> = devices
-                    .keys()
-                    .map(|n| format!("{} - {}", n, n))
-                    .collect();
+                let mut entries: Vec<String> =
+                    devices.keys().map(|n| format!("{} - {}", n, n)).collect();
                 entries.sort();
                 Response::new(true, entries.join("; "))
             }
@@ -258,10 +257,9 @@ impl DaemonCommand {
             DaemonCommand::SetLayerVolume { index, volume } => {
                 let mut p = get_audio_player().lock().await;
                 match p.set_layer_volume(index, volume) {
-                    Ok(_) => Response::new(
-                        true,
-                        format!("Layer {} volume set to {}", index, volume),
-                    ),
+                    Ok(_) => {
+                        Response::new(true, format!("Layer {} volume set to {}", index, volume))
+                    }
                     Err(e) => Response::new(false, e.to_string()),
                 }
             }

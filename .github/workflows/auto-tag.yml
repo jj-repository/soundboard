@@ -32,7 +32,7 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes
-          DISCLAIMER=$'## 📥 Downloads\n\n**Just grab one file:**\n- **Windows** → `soundboard.zip`\n- **Linux** → `soundboard-Linux.zip`\n\nThe `.sha256` files are optional checksums for verifying the download — you don\'t need them to use the app.\n\n---\n\n'
+          DISCLAIMER=$'## 📥 Downloads\n\n**Grab `soundboard.zip`** — Windows-only build. The `.sha256` sidecar is an optional checksum for verifying the download.\n\n---\n\n'
           BODY=$(gh release view "$TAG" --json body -q .body)
           printf '%s%s' "$DISCLAIMER" "$BODY" > /tmp/release_notes.md
           gh release edit "$TAG" --notes-file /tmp/release_notes.md

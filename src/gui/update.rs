@@ -25,6 +25,8 @@ impl App for SoundpadGui {
         self.poll_update_status();
         // VB-Cable first-run detection + install progress channel
         self.logic_vbcable_wizard();
+        // Drain yt-dlp grab status channel
+        self.poll_url_grab_status();
 
         {
             let guard = self.audio_player_state_shared.lock_or_recover();
@@ -38,7 +40,9 @@ impl App for SoundpadGui {
         self.config.scale_factor = new_scale_factor;
 
         if new_scale_factor != old_scale_factor && self.config.save_scale_factor {
-            self.config.save_to_file().ok();
+            if let Err(e) = self.config.save_to_file() {
+                tracing::error!("Failed to persist scale factor: {}", e);
+            }
         }
 
         self.handle_input(ctx);
@@ -99,7 +103,9 @@ impl App for SoundpadGui {
             if self.config.save_volume {
                 let mut daemon_config = get_daemon_config();
                 daemon_config.default_volume = Some(new_volume);
-                daemon_config.save_to_file().ok();
+                if let Err(e) = daemon_config.save_to_file() {
+                    tracing::error!("Failed to persist volume: {}", e);
+                }
             }
         } else {
             self.app_state.volume_slider_value = self.audio_player_state.volume;
@@ -119,7 +125,9 @@ impl App for SoundpadGui {
             if self.config.save_gain {
                 let mut daemon_config = get_daemon_config();
                 daemon_config.default_gain = Some(new_gain);
-                daemon_config.save_to_file().ok();
+                if let Err(e) = daemon_config.save_to_file() {
+                    tracing::error!("Failed to persist gain: {}", e);
+                }
             }
         } else {
             self.app_state.gain_slider_value = self.audio_player_state.gain;
@@ -139,7 +147,9 @@ impl App for SoundpadGui {
             if self.config.save_mic_gain {
                 let mut daemon_config = get_daemon_config();
                 daemon_config.default_mic_gain = Some(new_mic_gain);
-                daemon_config.save_to_file().ok();
+                if let Err(e) = daemon_config.save_to_file() {
+                    tracing::error!("Failed to persist mic gain: {}", e);
+                }
             }
         } else {
             self.app_state.mic_gain_slider_value = self.audio_player_state.mic_gain;

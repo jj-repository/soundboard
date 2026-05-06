@@ -1,13 +1,30 @@
 use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager,
     hotkey::{Code, HotKey, Modifiers},
+    GlobalHotKeyEvent, GlobalHotKeyManager,
 };
 use soundboard::types::config::{HotkeyBinding, HotkeyConfig};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, RwLock,
+};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 pub enum HotkeyAction {
     PlayPause,
     Stop,
+    /// Toggle recording: start a new clip if idle, otherwise stop and save.
+    /// The source (mic vs system loopback) is taken from the current GUI
+    /// `app_state.record_source` selection.
+    ToggleRecording,
+}
+
+impl HotkeyManager {
+    /// Clone the action sender so other input sources (MIDI, gamepad) can
+    /// dispatch into the same `HotkeyAction` channel the GUI already polls.
+    pub fn sender(&self) -> mpsc::Sender<HotkeyAction> {
+        self.sender.clone()
+    }
 }
 
 /// Shared state for hotkey IDs that can be updated at runtime
@@ -15,6 +32,7 @@ pub enum HotkeyAction {
 struct HotkeyIds {
     play_pause_id: Option<u32>,
     stop_id: Option<u32>,
+    record_toggle_id: Option<u32>,
 }
 
 pub struct HotkeyManager {
@@ -24,6 +42,9 @@ pub struct HotkeyManager {
     ids: Arc<RwLock<HotkeyIds>>,
     play_pause_binding: Option<HotkeyBinding>,
     stop_binding: Option<HotkeyBinding>,
+    record_toggle_binding: Option<HotkeyBinding>,
+    listener_stop: Arc<AtomicBool>,
+    listener_thread: Option<JoinHandle<()>>,
 }
 
 impl HotkeyManager {
@@ -38,6 +59,7 @@ impl HotkeyManager {
 
         let (sender, receiver) = mpsc::channel();
         let ids = Arc::new(RwLock::new(HotkeyIds::default()));
+        let listener_stop = Arc::new(AtomicBool::new(false));
 
         let mut hotkey_manager = HotkeyManager {
             manager,
@@ -46,38 +68,53 @@ impl HotkeyManager {
             ids: ids.clone(),
             play_pause_binding: None,
             stop_binding: None,
+            record_toggle_binding: None,
+            listener_stop: listener_stop.clone(),
+            listener_thread: None,
         };
 
         if config.enabled {
             hotkey_manager.register_hotkeys(config);
         }
 
-        // Start the event listener thread
+        // Start the event listener thread. Polls with a short timeout so it
+        // can observe the stop flag and exit on Drop.
         let sender_clone = hotkey_manager.sender.clone();
         let ids_clone = ids;
+        let stop_clone = listener_stop;
 
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             let global_receiver = GlobalHotKeyEvent::receiver();
-            loop {
-                if let Ok(event) = global_receiver.recv() {
-                    if event.state == global_hotkey::HotKeyState::Pressed {
-                        // Use unwrap_or_else to handle poisoned lock gracefully
-                        let ids = match ids_clone.read() {
-                            Ok(guard) => guard,
-                            Err(poisoned) => {
-                                tracing::error!("Warning: Hotkey IDs lock was poisoned, recovering...");
-                                poisoned.into_inner()
+            while !stop_clone.load(Ordering::Acquire) {
+                // global-hotkey uses crossbeam_channel, so its
+                // RecvTimeoutError is a separate type from std::sync::mpsc.
+                match global_receiver.recv_timeout(Duration::from_millis(100)) {
+                    Ok(event) => {
+                        if event.state == global_hotkey::HotKeyState::Pressed {
+                            let ids = match ids_clone.read() {
+                                Ok(guard) => guard,
+                                Err(poisoned) => {
+                                    tracing::error!(
+                                        "Warning: Hotkey IDs lock was poisoned, recovering..."
+                                    );
+                                    poisoned.into_inner()
+                                }
+                            };
+                            if Some(event.id) == ids.play_pause_id {
+                                sender_clone.send(HotkeyAction::PlayPause).ok();
+                            } else if Some(event.id) == ids.stop_id {
+                                sender_clone.send(HotkeyAction::Stop).ok();
+                            } else if Some(event.id) == ids.record_toggle_id {
+                                sender_clone.send(HotkeyAction::ToggleRecording).ok();
                             }
-                        };
-                        if Some(event.id) == ids.play_pause_id {
-                            sender_clone.send(HotkeyAction::PlayPause).ok();
-                        } else if Some(event.id) == ids.stop_id {
-                            sender_clone.send(HotkeyAction::Stop).ok();
                         }
                     }
+                    Err(e) if e.is_timeout() => continue,
+                    Err(_) => break, // disconnected
                 }
             }
         });
+        hotkey_manager.listener_thread = Some(handle);
 
         Some(hotkey_manager)
     }
@@ -86,7 +123,9 @@ impl HotkeyManager {
         let mut ids = match self.ids.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                tracing::error!("Warning: Hotkey IDs lock was poisoned during register, recovering...");
+                tracing::error!(
+                    "Warning: Hotkey IDs lock was poisoned during register, recovering..."
+                );
                 poisoned.into_inner()
             }
         };
@@ -124,13 +163,32 @@ impl HotkeyManager {
                 }
             }
         }
+
+        // Register Record-toggle hotkey
+        if let Some(ref binding) = config.record_toggle {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
+                ids.record_toggle_id = Some(hotkey.id());
+                self.record_toggle_binding = Some(binding.clone());
+                if let Err(e) = self.manager.register(hotkey) {
+                    tracing::error!(
+                        "Failed to register Record-toggle hotkey ({}): {}",
+                        binding.display(),
+                        e
+                    );
+                    ids.record_toggle_id = None;
+                    self.record_toggle_binding = None;
+                }
+            }
+        }
     }
 
     fn unregister_hotkeys(&mut self) {
         let mut ids = match self.ids.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                tracing::error!("Warning: Hotkey IDs lock was poisoned during unregister, recovering...");
+                tracing::error!(
+                    "Warning: Hotkey IDs lock was poisoned during unregister, recovering..."
+                );
                 poisoned.into_inner()
             }
         };
@@ -150,6 +208,14 @@ impl HotkeyManager {
             }
         }
         ids.stop_id = None;
+
+        // Unregister Record-toggle hotkey
+        if let Some(ref binding) = self.record_toggle_binding.take() {
+            if let Some(hotkey) = binding_to_hotkey(binding) {
+                let _ = self.manager.unregister(hotkey);
+            }
+        }
+        ids.record_toggle_id = None;
     }
 
     pub fn update_hotkeys(&mut self, config: &HotkeyConfig) {
@@ -159,6 +225,19 @@ impl HotkeyManager {
         // Re-register if enabled
         if config.enabled {
             self.register_hotkeys(config);
+        }
+    }
+}
+
+impl Drop for HotkeyManager {
+    fn drop(&mut self) {
+        self.listener_stop.store(true, Ordering::Release);
+        if let Some(handle) = self.listener_thread.take() {
+            // Best-effort join: thread polls every 100ms, so it exits within
+            // one tick of the stop flag flip.
+            if let Err(e) = handle.join() {
+                tracing::error!("hotkey listener thread panicked on join: {:?}", e);
+            }
         }
     }
 }
@@ -349,5 +428,139 @@ pub fn key_display_name(key: &str) -> String {
         "Backquote" => "`".to_string(),
 
         _ => key.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding(key: &str, ctrl: bool, shift: bool, alt: bool, super_key: bool) -> HotkeyBinding {
+        HotkeyBinding::new(key, ctrl, shift, alt, super_key)
+    }
+
+    // ---- string_to_code ----
+
+    #[test]
+    fn string_to_code_letters() {
+        assert!(matches!(string_to_code("KeyA"), Some(Code::KeyA)));
+        assert!(matches!(string_to_code("KeyZ"), Some(Code::KeyZ)));
+        assert!(matches!(string_to_code("KeyP"), Some(Code::KeyP)));
+    }
+
+    #[test]
+    fn string_to_code_digits_function_special() {
+        assert!(matches!(string_to_code("Digit0"), Some(Code::Digit0)));
+        assert!(matches!(string_to_code("Digit9"), Some(Code::Digit9)));
+        assert!(matches!(string_to_code("F1"), Some(Code::F1)));
+        assert!(matches!(string_to_code("F12"), Some(Code::F12)));
+        assert!(matches!(string_to_code("Space"), Some(Code::Space)));
+        assert!(matches!(string_to_code("Enter"), Some(Code::Enter)));
+        assert!(matches!(string_to_code("Escape"), Some(Code::Escape)));
+    }
+
+    #[test]
+    fn string_to_code_arrows_numpad_punct() {
+        assert!(matches!(string_to_code("ArrowUp"), Some(Code::ArrowUp)));
+        assert!(matches!(string_to_code("Numpad0"), Some(Code::Numpad0)));
+        assert!(matches!(
+            string_to_code("NumpadDecimal"),
+            Some(Code::NumpadDecimal)
+        ));
+        assert!(matches!(string_to_code("Minus"), Some(Code::Minus)));
+        assert!(matches!(string_to_code("Backquote"), Some(Code::Backquote)));
+    }
+
+    #[test]
+    fn string_to_code_unknown_returns_none() {
+        assert!(string_to_code("").is_none());
+        assert!(string_to_code("Bogus").is_none());
+        assert!(string_to_code("keya").is_none()); // case-sensitive
+        assert!(string_to_code("F13").is_none()); // out of supported range
+    }
+
+    // ---- key_display_name ----
+
+    #[test]
+    fn key_display_name_letters_strip_prefix() {
+        assert_eq!(key_display_name("KeyA"), "A");
+        assert_eq!(key_display_name("KeyZ"), "Z");
+    }
+
+    #[test]
+    fn key_display_name_digits_strip_prefix() {
+        assert_eq!(key_display_name("Digit0"), "0");
+        assert_eq!(key_display_name("Digit9"), "9");
+    }
+
+    #[test]
+    fn key_display_name_numpad_format() {
+        assert_eq!(key_display_name("Numpad0"), "Num 0");
+        assert_eq!(key_display_name("NumpadAdd"), "Num Add");
+        assert_eq!(key_display_name("NumpadDecimal"), "Num Decimal");
+    }
+
+    #[test]
+    fn key_display_name_function_keys_passthrough() {
+        assert_eq!(key_display_name("F1"), "F1");
+        assert_eq!(key_display_name("F12"), "F12");
+    }
+
+    #[test]
+    fn key_display_name_special_short_forms() {
+        assert_eq!(key_display_name("Escape"), "Esc");
+        assert_eq!(key_display_name("Delete"), "Del");
+        assert_eq!(key_display_name("Insert"), "Ins");
+        assert_eq!(key_display_name("PageUp"), "PgUp");
+        assert_eq!(key_display_name("PageDown"), "PgDn");
+    }
+
+    #[test]
+    fn key_display_name_arrows_short_forms() {
+        assert_eq!(key_display_name("ArrowUp"), "Up");
+        assert_eq!(key_display_name("ArrowDown"), "Down");
+        assert_eq!(key_display_name("ArrowLeft"), "Left");
+        assert_eq!(key_display_name("ArrowRight"), "Right");
+    }
+
+    #[test]
+    fn key_display_name_punctuation_to_glyph() {
+        assert_eq!(key_display_name("Minus"), "-");
+        assert_eq!(key_display_name("Equal"), "=");
+        assert_eq!(key_display_name("BracketLeft"), "[");
+        assert_eq!(key_display_name("Backslash"), "\\");
+        assert_eq!(key_display_name("Backquote"), "`");
+    }
+
+    #[test]
+    fn key_display_name_unknown_passthrough() {
+        assert_eq!(key_display_name("Foobar"), "Foobar");
+        assert_eq!(key_display_name(""), "");
+    }
+
+    // ---- binding_to_hotkey ----
+
+    #[test]
+    fn binding_to_hotkey_letter_no_modifiers() {
+        let hk = binding_to_hotkey(&binding("KeyP", false, false, false, false));
+        assert!(hk.is_some());
+    }
+
+    #[test]
+    fn binding_to_hotkey_all_modifiers() {
+        let hk = binding_to_hotkey(&binding("KeyP", true, true, true, true));
+        assert!(hk.is_some());
+    }
+
+    #[test]
+    fn binding_to_hotkey_unknown_key_returns_none() {
+        let hk = binding_to_hotkey(&binding("Bogus", true, false, false, false));
+        assert!(hk.is_none());
+    }
+
+    #[test]
+    fn binding_to_hotkey_empty_key_returns_none() {
+        let hk = binding_to_hotkey(&binding("", false, false, false, false));
+        assert!(hk.is_none());
     }
 }

@@ -16,8 +16,8 @@ pub struct TrayHandle {
 }
 
 pub fn start_tray() -> Option<TrayHandle> {
-    use tray_icon::{TrayIconBuilder, Icon};
     use muda::{Menu, MenuItem, PredefinedMenuItem};
+    use tray_icon::{Icon, TrayIconBuilder};
 
     let (sender, receiver) = mpsc::channel();
     let (stop_sender, stop_receiver) = mpsc::channel::<()>();
@@ -28,10 +28,18 @@ pub fn start_tray() -> Option<TrayHandle> {
         let stop_item = MenuItem::new("Stop", true, None);
         let quit_item = MenuItem::new("Quit", true, None);
 
-        menu.append(&play_pause_item).ok();
-        menu.append(&stop_item).ok();
-        menu.append(&PredefinedMenuItem::separator()).ok();
-        menu.append(&quit_item).ok();
+        if let Err(e) = menu.append(&play_pause_item) {
+            tracing::error!("Failed to append Play/Pause tray item: {}", e);
+        }
+        if let Err(e) = menu.append(&stop_item) {
+            tracing::error!("Failed to append Stop tray item: {}", e);
+        }
+        if let Err(e) = menu.append(&PredefinedMenuItem::separator()) {
+            tracing::error!("Failed to append tray separator: {}", e);
+        }
+        if let Err(e) = menu.append(&quit_item) {
+            tracing::error!("Failed to append Quit tray item: {}", e);
+        }
 
         let play_pause_id = play_pause_item.id().clone();
         let stop_id = stop_item.id().clone();

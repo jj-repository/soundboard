@@ -1,16 +1,18 @@
 mod draw;
+mod gamepad;
 mod hotkeys;
 mod input;
+mod midi;
 pub mod tray; // pub: tray handle is stored in SoundpadGui and started externally
 mod update;
 mod vbcable_wizard;
 
 use crate::gui::hotkeys::{HotkeyAction, HotkeyManager};
-use crate::gui::tray::{TrayHandle, TrayMessage, start_tray};
-use eframe::{HardwareAcceleration, NativeOptions, icon_data::from_png_bytes, run_native};
+use crate::gui::tray::{start_tray, TrayHandle, TrayMessage};
+use eframe::{icon_data::from_png_bytes, run_native, HardwareAcceleration, NativeOptions};
 use egui::{Context, Vec2, ViewportBuilder};
+use rfd::FileDialog;
 use soundboard::{
-    MutexExt,
     types::{
         audio_player::PlayerState,
         config::GuiConfig,
@@ -22,8 +24,8 @@ use soundboard::{
         gui::{get_gui_config, make_request_sync, start_app_state_thread},
         updater::{check_for_updates, download_update},
     },
+    MutexExt,
 };
-use rfd::FileDialog;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
 use std::{
@@ -63,6 +65,16 @@ struct SoundpadGui {
     pub vbcable_wizard_status: Option<soundboard::utils::vbcable_install::InstallStatus>,
     pub vbcable_install_rx:
         Option<mpsc::Receiver<soundboard::utils::vbcable_install::InstallStatus>>,
+    /// Receiver for the active yt-dlp grab thread; `None` when idle.
+    pub url_grab_rx: Option<mpsc::Receiver<soundboard::utils::yt_grab::GrabStatus>>,
+    /// MIDI input listener; `None` if disabled or no MIDI ports available.
+    /// Field exists only to keep the manager alive (its `Drop` closes ports).
+    #[allow(dead_code)]
+    pub midi_manager: Option<crate::gui::midi::MidiManager>,
+    /// Gamepad input listener; `None` if disabled or gilrs failed to init.
+    /// Field exists only to keep the manager alive (its `Drop` joins thread).
+    #[allow(dead_code)]
+    pub gamepad_manager: Option<crate::gui::gamepad::GamepadManager>,
 }
 
 impl SoundpadGui {
@@ -97,6 +109,17 @@ impl SoundpadGui {
         let tray_handle = start_tray();
         let hotkey_manager = HotkeyManager::new(&config.hotkeys);
 
+        // Plumb MIDI + gamepad input into the same HotkeyAction channel.
+        // Both are off by default; users opt in via gui.json.
+        let (midi_manager, gamepad_manager) = if let Some(ref hk) = hotkey_manager {
+            let sender = hk.sender();
+            let midi = crate::gui::midi::MidiManager::new(sender.clone(), &config.hotkeys.midi);
+            let gp = crate::gui::gamepad::GamepadManager::new(sender, &config.hotkeys.gamepad);
+            (midi, gp)
+        } else {
+            (None, None)
+        };
+
         SoundpadGui {
             app_state,
             config,
@@ -114,6 +137,9 @@ impl SoundpadGui {
             vbcable_wizard_visible: false,
             vbcable_wizard_status: None,
             vbcable_install_rx: None,
+            url_grab_rx: None,
+            midi_manager,
+            gamepad_manager,
         }
     }
 
@@ -173,6 +199,9 @@ impl SoundpadGui {
 
         for action in actions {
             match action {
+                HotkeyAction::ToggleRecording => {
+                    self.toggle_recording();
+                }
                 HotkeyAction::PlayPause => {
                     self.play_toggle();
                 }
@@ -213,7 +242,12 @@ impl SoundpadGui {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    sender.send(UpdateStatus::Error(format!("Failed to create runtime: {}", e))).ok();
+                    sender
+                        .send(UpdateStatus::Error(format!(
+                            "Failed to create runtime: {}",
+                            e
+                        )))
+                        .ok();
                     return;
                 }
             };
@@ -248,7 +282,12 @@ impl SoundpadGui {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    sender.send(UpdateStatus::Error(format!("Failed to create runtime: {}", e))).ok();
+                    sender
+                        .send(UpdateStatus::Error(format!(
+                            "Failed to create runtime: {}",
+                            e
+                        )))
+                        .ok();
                     return;
                 }
             };
@@ -287,7 +326,15 @@ impl SoundpadGui {
     pub fn open_dir(&mut self, path: &Path) {
         self.app_state.current_dir = Some(path.to_path_buf());
         self.app_state.files = match path.read_dir() {
-            Ok(entries) => entries.filter_map(|res| res.ok()).map(|e| e.path()).collect(),
+            Ok(entries) => entries
+                .filter_map(|res| match res {
+                    Ok(e) => Some(e.path()),
+                    Err(e) => {
+                        tracing::warn!("Skipping unreadable entry under {}: {}", path.display(), e);
+                        None
+                    }
+                })
+                .collect(),
             Err(e) => {
                 tracing::error!("Failed to read directory {}: {}", path.display(), e);
                 Default::default()
@@ -298,7 +345,9 @@ impl SoundpadGui {
     pub fn play_file(&mut self, path: &PathBuf) {
         // Apply per-sound volume if set
         if let Some(sound_volume) = self.get_sound_volume(path) {
-            make_request_sync(Request::set_volume(sound_volume)).ok();
+            if let Err(e) = make_request_sync(Request::set_volume(sound_volume)) {
+                tracing::warn!("Failed to apply per-sound volume {}: {}", sound_volume, e);
+            }
             // Update local state to reflect the volume change
             let mut guard = self.audio_player_state_shared.lock_or_recover();
             guard.volume = sound_volume;
@@ -484,9 +533,15 @@ impl SoundpadGui {
 
     /// Create a new playlist
     pub fn create_playlist(&mut self, name: &str) {
-        if !name.is_empty() && name != "All Sounds" && name != "Favourites" && !self.config.categories.contains_key(name) {
+        if !name.is_empty()
+            && name != "All Sounds"
+            && name != "Favourites"
+            && !self.config.categories.contains_key(name)
+        {
             use soundboard::types::config::SoundCategory;
-            self.config.categories.insert(name.to_string(), SoundCategory::new(name));
+            self.config
+                .categories
+                .insert(name.to_string(), SoundCategory::new(name));
             // Add to playlist order
             self.config.playlist_order.push(name.to_string());
             if let Err(e) = self.config.save_to_file() {
@@ -512,15 +567,25 @@ impl SoundpadGui {
 
     /// Rename a playlist
     pub fn rename_playlist(&mut self, old_name: &str, new_name: &str) {
-        if !new_name.is_empty() && new_name != "All Sounds" && !self.config.categories.contains_key(new_name) {
+        if !new_name.is_empty()
+            && new_name != "All Sounds"
+            && !self.config.categories.contains_key(new_name)
+        {
             if let Some(mut playlist) = self.config.categories.remove(old_name) {
                 playlist.name = new_name.to_string();
-                self.config.categories.insert(new_name.to_string(), playlist);
+                self.config
+                    .categories
+                    .insert(new_name.to_string(), playlist);
                 if self.app_state.current_playlist.as_deref() == Some(old_name) {
                     self.app_state.current_playlist = Some(new_name.to_string());
                 }
                 // Update playlist order
-                if let Some(pos) = self.config.playlist_order.iter().position(|n| n == old_name) {
+                if let Some(pos) = self
+                    .config
+                    .playlist_order
+                    .iter()
+                    .position(|n| n == old_name)
+                {
                     self.config.playlist_order[pos] = new_name.to_string();
                 }
                 if let Err(e) = self.config.save_to_file() {
@@ -572,7 +637,9 @@ impl SoundpadGui {
         // Ensure playlist_order contains all playlists
         self.sync_playlist_order();
 
-        if from_index >= self.config.playlist_order.len() || to_index >= self.config.playlist_order.len() {
+        if from_index >= self.config.playlist_order.len()
+            || to_index >= self.config.playlist_order.len()
+        {
             return;
         }
 
@@ -586,7 +653,9 @@ impl SoundpadGui {
     /// Sync playlist_order to contain all playlists
     fn sync_playlist_order(&mut self) {
         // Remove entries that no longer exist
-        self.config.playlist_order.retain(|name| self.config.categories.contains_key(name));
+        self.config
+            .playlist_order
+            .retain(|name| self.config.categories.contains_key(name));
 
         // Add missing entries
         for name in self.config.categories.keys() {
@@ -610,7 +679,12 @@ impl SoundpadGui {
     }
 
     /// Move a sound within a playlist from one position to another
-    pub fn move_sound_in_playlist(&mut self, playlist_name: &str, from_index: usize, to_index: usize) {
+    pub fn move_sound_in_playlist(
+        &mut self,
+        playlist_name: &str,
+        from_index: usize,
+        to_index: usize,
+    ) {
         if playlist_name == "All Sounds" || playlist_name == "Favourites" {
             return; // Can't reorder these virtual playlists
         }
@@ -705,7 +779,11 @@ impl SoundpadGui {
     }
 
     pub fn add_sound_tag(&mut self, path: &Path, tag: &str) {
-        let metadata = self.config.sound_metadata.entry(path.to_path_buf()).or_default();
+        let metadata = self
+            .config
+            .sound_metadata
+            .entry(path.to_path_buf())
+            .or_default();
         metadata.add_tag(tag);
         if let Err(e) = self.config.save_to_file() {
             tracing::error!("Failed to save config: {}", e);
@@ -721,6 +799,38 @@ impl SoundpadGui {
             if let Err(e) = self.config.save_to_file() {
                 tracing::error!("Failed to save config: {}", e);
             }
+        }
+    }
+
+    /// Persist a button colour for the sound (or clear with `None`).
+    pub fn set_sound_color(&mut self, path: &Path, color_rgb: Option<u32>) {
+        let metadata = self
+            .config
+            .sound_metadata
+            .entry(path.to_path_buf())
+            .or_default();
+        metadata.color_rgb = color_rgb;
+        if metadata.is_empty() {
+            self.config.sound_metadata.remove(path);
+        }
+        if let Err(e) = self.config.save_to_file() {
+            tracing::error!("Failed to save config: {}", e);
+        }
+    }
+
+    /// Persist a Material-icon name for the sound (or clear with `None`).
+    pub fn set_sound_icon(&mut self, path: &Path, icon: Option<String>) {
+        let metadata = self
+            .config
+            .sound_metadata
+            .entry(path.to_path_buf())
+            .or_default();
+        metadata.icon = icon.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        if metadata.is_empty() {
+            self.config.sound_metadata.remove(path);
+        }
+        if let Err(e) = self.config.save_to_file() {
+            tracing::error!("Failed to save config: {}", e);
         }
     }
 
@@ -835,7 +945,11 @@ impl SoundpadGui {
             }
         }
 
-        tracing::error!("Import complete: {} imported, {} skipped", imported, skipped);
+        tracing::error!(
+            "Import complete: {} imported, {} skipped",
+            imported,
+            skipped
+        );
 
         // Refresh file list if viewing "All Sounds" playlist
         if self.app_state.current_playlist.as_deref() == Some("All Sounds") {
@@ -845,54 +959,15 @@ impl SoundpadGui {
 
     /// Generate unique path if file already exists
     fn get_unique_path(&self, path: &Path) -> PathBuf {
-        if !path.exists() {
-            return path.to_path_buf();
-        }
-
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("file");
-        let ext = path.extension().and_then(|e| e.to_str());
-        let parent = path.parent().unwrap_or(std::path::Path::new("."));
-
-        // Helper to build filename with optional extension
-        let make_filename = |base: String| -> String {
-            match ext {
-                Some(e) => format!("{}.{}", base, e),
-                None => base,
-            }
-        };
-
-        // Try numbered suffixes first
-        for i in 1..1000 {
-            let new_name = make_filename(format!("{} ({})", stem, i));
-            let new_path = parent.join(&new_name);
-            if !new_path.exists() {
-                return new_path;
-            }
-        }
-
-        // Fallback: use timestamp with nanoseconds for uniqueness
-        let duration = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let timestamp = format!("{}_{}", duration.as_secs(), duration.subsec_nanos());
-
-        let fallback_name = make_filename(format!("{}_{}", stem, timestamp));
-        let fallback_path = parent.join(&fallback_name);
-
-        // If even the timestamp-based name exists (very unlikely), add random suffix
-        if fallback_path.exists() {
-            let random_suffix: u32 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| (d.as_nanos() % 100000) as u32)
-                .unwrap_or(0);
-            let final_name = make_filename(format!("{}_{}_{}", stem, timestamp, random_suffix));
-            return parent.join(&final_name);
-        }
-
-        fallback_path
+        unique_path(
+            path,
+            |p| p.exists(),
+            || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+            },
+        )
     }
 
     /// Open sounds folder in system file manager
@@ -906,7 +981,9 @@ impl SoundpadGui {
     pub fn set_sounds_folder(&mut self, path: PathBuf) {
         // Create directory if it doesn't exist
         if !path.exists() {
-            std::fs::create_dir_all(&path).ok();
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                tracing::error!("Failed to create sounds folder {}: {}", path.display(), e);
+            }
         }
 
         self.config.sounds_folder = Some(path.clone());
@@ -932,6 +1009,109 @@ impl SoundpadGui {
 
         if let Some(paths) = file_dialog.pick_files() {
             self.import_files(paths);
+        }
+    }
+
+    /// Toggle the audio recorder. Saves into the configured sounds folder.
+    /// Source (mic vs system) is read from `app_state.record_source`. After
+    /// stopping, refreshes the "All Sounds" view if active.
+    pub fn toggle_recording(&mut self) {
+        use soundboard::types::gui::RecordSourceUi;
+        use soundboard::utils::recorder::{self, RecordSource, ToggleOutcome};
+
+        let Some(sounds_folder) = self.config.sounds_folder.clone() else {
+            self.app_state.record_status_message =
+                Some("Sounds folder is not set; configure it first.".to_string());
+            return;
+        };
+        let source = match self.app_state.record_source {
+            RecordSourceUi::Mic => RecordSource::Mic,
+            RecordSourceUi::SystemLoopback => RecordSource::SystemLoopback,
+        };
+        match recorder::toggle(source, &sounds_folder) {
+            Ok(ToggleOutcome::Started(path)) => {
+                self.app_state.record_status_message =
+                    Some(format!("Recording -> {}", path.display()));
+            }
+            Ok(ToggleOutcome::Stopped(Some(path))) => {
+                self.app_state.record_status_message = Some(format!("Saved {}", path.display()));
+                if self.app_state.current_playlist.as_deref() == Some("All Sounds") {
+                    self.load_all_sounds();
+                }
+            }
+            Ok(ToggleOutcome::Stopped(None)) => {
+                self.app_state.record_status_message = Some("No recording was active.".to_string());
+            }
+            Err(e) => {
+                tracing::error!("recorder toggle failed: {}", e);
+                self.app_state.record_status_message = Some(format!("Recording failed: {}", e));
+            }
+        }
+    }
+
+    /// Kick off a background yt-dlp download. Validates URL, requires sounds
+    /// folder to be set, and stores the receiver so `poll_url_grab_status`
+    /// can update the UI.
+    pub fn start_url_grab(&mut self, url: String) {
+        use soundboard::utils::yt_grab;
+
+        let Some(sounds_folder) = self.config.sounds_folder.clone() else {
+            self.app_state.url_grab_status =
+                Some("Sounds folder is not set. Configure it in settings first.".to_string());
+            return;
+        };
+        if let Err(e) = yt_grab::validate_url(&url) {
+            self.app_state.url_grab_status = Some(format!("Invalid URL: {}", e));
+            return;
+        }
+        if !yt_grab::is_yt_dlp_available() {
+            self.app_state.url_grab_status = Some(
+                "yt-dlp is not installed or not on PATH. Install it from https://github.com/yt-dlp/yt-dlp/releases."
+                    .to_string(),
+            );
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        yt_grab::spawn_grab(url, sounds_folder, tx);
+        self.url_grab_rx = Some(rx);
+        self.app_state.url_grab_in_progress = true;
+        self.app_state.url_grab_status = Some("Downloading...".to_string());
+    }
+
+    /// Drain the yt-dlp status channel. On terminal status, refreshes the
+    /// "All Sounds" view if active.
+    pub fn poll_url_grab_status(&mut self) {
+        let Some(rx) = self.url_grab_rx.as_ref() else {
+            return;
+        };
+        let mut terminal = false;
+        loop {
+            match rx.try_recv() {
+                Ok(soundboard::utils::yt_grab::GrabStatus::Starting) => {
+                    self.app_state.url_grab_status = Some("Downloading...".to_string());
+                }
+                Ok(soundboard::utils::yt_grab::GrabStatus::Done(path)) => {
+                    self.app_state.url_grab_status =
+                        Some(format!("Downloaded: {}", path.display()));
+                    terminal = true;
+                }
+                Ok(soundboard::utils::yt_grab::GrabStatus::Error(msg)) => {
+                    self.app_state.url_grab_status = Some(format!("Failed: {}", msg));
+                    terminal = true;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    terminal = true;
+                    break;
+                }
+            }
+        }
+        if terminal {
+            self.url_grab_rx = None;
+            self.app_state.url_grab_in_progress = false;
+            if self.app_state.current_playlist.as_deref() == Some("All Sounds") {
+                self.load_all_sounds();
+            }
         }
     }
 }
@@ -972,6 +1152,12 @@ pub async fn run() -> Result<()> {
         }),
     ) {
         Ok(_) => {
+            // Finalise any in-flight recording so the WAV header is written.
+            // Otherwise the file is left without RIFF chunk sizes and is
+            // unreadable.
+            if let Err(e) = soundboard::utils::recorder::stop() {
+                tracing::error!("failed to finalise recording on exit: {}", e);
+            }
             let config = get_gui_config();
             if config.pause_on_exit {
                 make_request_sync(Request::pause()).ok();
@@ -979,5 +1165,164 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Err(e) => Err(soundboard::SoundboardError::Other(e.to_string())),
+    }
+}
+
+/// Pure helper for unique-path generation. Generates a path that does not
+/// collide according to `path_exists`, given a current-time provider for the
+/// timestamp fallback. Extracted from `SoundpadGui::get_unique_path` so the
+/// numbering / fallback logic is testable without filesystem state.
+fn unique_path<E, N>(path: &Path, path_exists: E, now: N) -> PathBuf
+where
+    E: Fn(&Path) -> bool,
+    N: FnOnce() -> std::time::Duration,
+{
+    if !path_exists(path) {
+        return path.to_path_buf();
+    }
+
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = path.extension().and_then(|e| e.to_str());
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+
+    let make_filename = |base: String| -> String {
+        match ext {
+            Some(e) => format!("{}.{}", base, e),
+            None => base,
+        }
+    };
+
+    for i in 1..1000 {
+        let new_name = make_filename(format!("{} ({})", stem, i));
+        let new_path = parent.join(&new_name);
+        if !path_exists(&new_path) {
+            return new_path;
+        }
+    }
+
+    let duration = now();
+    let timestamp = format!("{}_{}", duration.as_secs(), duration.subsec_nanos());
+
+    let fallback_name = make_filename(format!("{}_{}", stem, timestamp));
+    let fallback_path = parent.join(&fallback_name);
+
+    if path_exists(&fallback_path) {
+        let random_suffix = (duration.as_nanos() % 100_000) as u32;
+        let final_name = make_filename(format!("{}_{}_{}", stem, timestamp, random_suffix));
+        return parent.join(&final_name);
+    }
+
+    fallback_path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_path;
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    fn make_exists(taken: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = taken.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
+    }
+
+    fn fixed_now() -> impl FnOnce() -> Duration {
+        || Duration::new(1_700_000_000, 123_456_789)
+    }
+
+    #[test]
+    fn unique_path_returns_input_when_no_collision() {
+        let exists = make_exists(&[]);
+        let result = unique_path(Path::new("/tmp/sound.mp3"), exists, fixed_now());
+        assert_eq!(result, PathBuf::from("/tmp/sound.mp3"));
+    }
+
+    #[test]
+    fn unique_path_appends_one_on_first_collision() {
+        let exists = make_exists(&["/tmp/sound.mp3"]);
+        let result = unique_path(Path::new("/tmp/sound.mp3"), exists, fixed_now());
+        assert_eq!(result, PathBuf::from("/tmp/sound (1).mp3"));
+    }
+
+    #[test]
+    fn unique_path_increments_until_free() {
+        let exists = make_exists(&[
+            "/tmp/sound.mp3",
+            "/tmp/sound (1).mp3",
+            "/tmp/sound (2).mp3",
+            "/tmp/sound (3).mp3",
+        ]);
+        let result = unique_path(Path::new("/tmp/sound.mp3"), exists, fixed_now());
+        assert_eq!(result, PathBuf::from("/tmp/sound (4).mp3"));
+    }
+
+    #[test]
+    fn unique_path_preserves_extension_with_dot() {
+        let exists = make_exists(&["/tmp/clip.wav"]);
+        let result = unique_path(Path::new("/tmp/clip.wav"), exists, fixed_now());
+        assert_eq!(result.extension().and_then(|e| e.to_str()), Some("wav"));
+        assert_eq!(
+            result.file_stem().and_then(|s| s.to_str()),
+            Some("clip (1)")
+        );
+    }
+
+    #[test]
+    fn unique_path_handles_no_extension() {
+        let exists = make_exists(&["/tmp/noext"]);
+        let result = unique_path(Path::new("/tmp/noext"), exists, fixed_now());
+        assert_eq!(result, PathBuf::from("/tmp/noext (1)"));
+        assert_eq!(result.extension(), None);
+    }
+
+    #[test]
+    fn unique_path_handles_bare_filename() {
+        // `Path::new("bare.mp3").parent()` returns Some("") (not None), so
+        // join produces a relative path without an explicit "." prefix.
+        let exists = make_exists(&["bare.mp3"]);
+        let result = unique_path(Path::new("bare.mp3"), exists, fixed_now());
+        assert_eq!(result, PathBuf::from("bare (1).mp3"));
+    }
+
+    #[test]
+    fn unique_path_falls_back_to_timestamp_after_999_collisions() {
+        // Simulate 1..1000 all taken: function must reach the timestamp branch
+        // and return a non-numbered name containing the seconds value.
+        let mut taken: Vec<String> = vec!["/tmp/sound.mp3".to_string()];
+        for i in 1..1000 {
+            taken.push(format!("/tmp/sound ({}).mp3", i));
+        }
+        let taken_refs: Vec<&str> = taken.iter().map(String::as_str).collect();
+        let exists = make_exists(&taken_refs);
+        let result = unique_path(Path::new("/tmp/sound.mp3"), exists, fixed_now());
+        let name = result.file_name().and_then(|n| n.to_str()).unwrap();
+        // Format: "sound_<secs>_<nanos>.mp3"
+        assert!(
+            name.starts_with("sound_1700000000_"),
+            "expected timestamp-based name, got {}",
+            name
+        );
+        assert!(name.ends_with(".mp3"), "expected .mp3 ext, got {}", name);
+    }
+
+    #[test]
+    fn unique_path_appends_random_suffix_when_timestamp_also_taken() {
+        // Force 1..1000 numbered names taken AND timestamp name taken; expect
+        // a third format: stem_<secs>_<nanos>_<random>.ext
+        let mut taken: Vec<String> = vec!["/tmp/sound.mp3".to_string()];
+        for i in 1..1000 {
+            taken.push(format!("/tmp/sound ({}).mp3", i));
+        }
+        // matches timestamp branch from fixed_now()
+        taken.push("/tmp/sound_1700000000_123456789.mp3".to_string());
+        let taken_refs: Vec<&str> = taken.iter().map(String::as_str).collect();
+        let exists = make_exists(&taken_refs);
+        let result = unique_path(Path::new("/tmp/sound.mp3"), exists, fixed_now());
+        let name = result.file_name().and_then(|n| n.to_str()).unwrap();
+        // Expected: sound_1700000000_123456789_<n>.mp3 where n = nanos % 100_000
+        let expected_random = (1_700_000_000u128 * 1_000_000_000 + 123_456_789) % 100_000;
+        let expected = format!("sound_1700000000_123456789_{}.mp3", expected_random as u32);
+        assert_eq!(name, expected);
     }
 }

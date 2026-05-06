@@ -1,9 +1,9 @@
 use crate::error::{Result, SoundboardError};
 use crate::utils::daemon::get_daemon_config;
 use crate::utils::path::has_supported_audio_extension;
-use rodio::{cpal, Decoder, Player, Source};
 use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
+use rodio::{cpal, Decoder, Player, Source};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -123,16 +123,32 @@ pub const MIN_MIC_GAIN: f32 = 0.5;
 /// `f32::clamp` propagates NaN, which would feed NaN samples to rodio; we
 /// substitute the lower bound so the failure mode is silence.
 pub fn clamp_volume(v: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+    if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(0.0, 1.0)
+    }
 }
 pub fn clamp_gain(g: f32) -> f32 {
-    if g.is_nan() { MIN_GAIN } else { g.clamp(MIN_GAIN, MAX_GAIN) }
+    if g.is_nan() {
+        MIN_GAIN
+    } else {
+        g.clamp(MIN_GAIN, MAX_GAIN)
+    }
 }
 pub fn clamp_mic_gain(g: f32) -> f32 {
-    if g.is_nan() { MIN_MIC_GAIN } else { g.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN) }
+    if g.is_nan() {
+        MIN_MIC_GAIN
+    } else {
+        g.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN)
+    }
 }
 pub fn clamp_layer_volume(v: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+    if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(0.0, 1.0)
+    }
 }
 
 /// Lock-free SPSC ring buffer wiring for the mic passthrough.
@@ -140,8 +156,8 @@ pub fn clamp_layer_volume(v: f32) -> f32 {
 /// them. Dropping the per-sample Mutex avoids priority inversion and the
 /// per-sample lock acquisition at 48 kHz.
 use ringbuf::{
-    HeapRb,
     traits::{Consumer as ConsumerTrait, Producer as ProducerTrait, Split},
+    HeapRb,
 };
 
 type MicConsumer = <HeapRb<f32> as Split>::Cons;
@@ -162,10 +178,18 @@ impl Iterator for MicSource {
 }
 
 impl Source for MicSource {
-    fn current_span_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> std::num::NonZero<u16> { self.channels }
-    fn sample_rate(&self) -> std::num::NonZero<u32> { self.sample_rate }
-    fn total_duration(&self) -> Option<Duration> { None }
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> std::num::NonZero<u16> {
+        self.channels
+    }
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
+        self.sample_rate
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
 }
 
 pub struct AudioPlayer {
@@ -175,6 +199,7 @@ pub struct AudioPlayer {
 
     pub current_input_device: Option<String>,
     mic_stop_sender: Option<std::sync::mpsc::Sender<()>>,
+    mic_thread: Option<std::thread::JoinHandle<()>>,
     mic_sink: Player,
 
     pub current_output_device: Option<String>,
@@ -207,7 +232,8 @@ impl AudioPlayer {
                             output_name
                         );
                         (
-                            DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
+                            DeviceSinkBuilder::open_default_sink()
+                                .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                             get_default_output_device(),
                         )
                     }
@@ -218,13 +244,15 @@ impl AudioPlayer {
                     match Self::create_stream_for_device(cable_name) {
                         Ok(stream) => (stream, Some(cable_name.clone())),
                         Err(_) => (
-                            DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
+                            DeviceSinkBuilder::open_default_sink()
+                                .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                             get_default_output_device(),
                         ),
                     }
                 } else {
                     (
-                        DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
+                        DeviceSinkBuilder::open_default_sink()
+                            .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                         get_default_output_device(),
                     )
                 }
@@ -252,6 +280,7 @@ impl AudioPlayer {
 
             current_input_device: default_input_name,
             mic_stop_sender: None,
+            mic_thread: None,
             mic_sink,
 
             current_output_device,
@@ -354,6 +383,18 @@ impl AudioPlayer {
         PlayerState::Playing
     }
 
+    /// True if either the main sink or any layer sink has audio queued and is
+    /// not paused. Used by the auto-PTT poll loop to decide whether the
+    /// configured PTT key should currently be held.
+    pub fn has_active_audio(&self) -> bool {
+        if self.sink.len() > 0 && !self.sink.is_paused() {
+            return true;
+        }
+        self.layers
+            .iter()
+            .any(|l| l.sink.len() > 0 && !l.sink.is_paused())
+    }
+
     fn update_sink_volume(&self) {
         self.sink.set_volume(self.volume * self.gain);
     }
@@ -438,7 +479,10 @@ impl AudioPlayer {
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
                 "failed to decode '{}' (format: {}): {}",
-                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown"),
                 extension,
                 err
             ))),
@@ -472,7 +516,10 @@ impl AudioPlayer {
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
                 "failed to decode '{}' (format: {}): {}",
-                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown"),
                 extension,
                 err
             ))),
@@ -493,10 +540,18 @@ impl AudioPlayer {
         Ok(())
     }
 
-    /// Stop the current mic capture thread and clear the mic sink
+    /// Stop the current mic capture thread and clear the mic sink. Joins the
+    /// capture thread so the cpal stream is dropped before we return — leaving
+    /// it dangling means a second `start_mic_passthrough` could race two
+    /// `Stream`s on the same device.
     fn stop_mic_passthrough(&mut self) {
         if let Some(sender) = self.mic_stop_sender.take() {
             sender.send(()).ok();
+        }
+        if let Some(handle) = self.mic_thread.take() {
+            if let Err(e) = handle.join() {
+                tracing::error!("mic passthrough thread panicked on join: {:?}", e);
+            }
         }
         self.mic_sink.stop();
     }
@@ -514,18 +569,24 @@ impl AudioPlayer {
         let device = host
             .input_devices()
             .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?
-            .find(|d| d.description().map(|desc| desc.name() == device_name).unwrap_or(false))
+            .find(|d| {
+                d.description()
+                    .map(|desc| desc.name() == device_name)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| SoundboardError::DeviceNotFound(device_name.clone()))?;
 
         let supported_config = device
             .default_input_config()
             .map_err(|e| SoundboardError::AudioDevice(e.to_string()))?;
         let sample_rate_hz: u32 = supported_config.sample_rate();
-        let sample_rate_nz = std::num::NonZero::<u32>::new(sample_rate_hz)
-            .ok_or_else(|| SoundboardError::AudioDevice("input device reported sample rate of 0".into()))?;
+        let sample_rate_nz = std::num::NonZero::<u32>::new(sample_rate_hz).ok_or_else(|| {
+            SoundboardError::AudioDevice("input device reported sample rate of 0".into())
+        })?;
         let channels: u16 = supported_config.channels();
-        let channels_nz = std::num::NonZero::<u16>::new(channels)
-            .ok_or_else(|| SoundboardError::AudioDevice("input device reported channel count of 0".into()))?;
+        let channels_nz = std::num::NonZero::<u16>::new(channels).ok_or_else(|| {
+            SoundboardError::AudioDevice("input device reported channel count of 0".into())
+        })?;
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
 
@@ -533,13 +594,19 @@ impl AudioPlayer {
         // sample (ringbuf 0.4 has no producer-side overwrite); the 500ms
         // head-room means overflow only happens if the consumer is already
         // far behind, in which case the behavior doesn't much matter.
-        let max_samples = (sample_rate_hz as usize * channels as usize) / 2;
-        let ring = HeapRb::<f32>::new(max_samples.max(1));
+        // Use checked_mul to defend against pathological device reports
+        // (e.g. 192 kHz × 1024 ch overflows usize on 32-bit targets).
+        let max_samples = (sample_rate_hz as usize)
+            .checked_mul(channels as usize)
+            .and_then(|p| p.checked_div(2))
+            .unwrap_or(48_000)
+            .max(1);
+        let ring = HeapRb::<f32>::new(max_samples);
         let (mut producer, consumer) = ring.split();
 
         let (stop_tx, stop_rx) = std::sync::mpsc::channel();
 
-        std::thread::spawn(move || {
+        let join = std::thread::spawn(move || {
             let stream_result = match sample_format {
                 cpal::SampleFormat::F32 => device.build_input_stream(
                     &stream_config,
@@ -592,6 +659,7 @@ impl AudioPlayer {
         self.mic_sink.play();
 
         self.mic_stop_sender = Some(stop_tx);
+        self.mic_thread = Some(join);
         tracing::info!("Mic passthrough started: {}", device_name);
         Ok(())
     }
@@ -613,13 +681,24 @@ impl AudioPlayer {
         }
 
         validate_audio_file(file_path)?;
-        let file = fs::File::open(file_path)?;
+
+        // File::open + Decoder::try_from both touch disk and decode the
+        // header. Run them on a blocking pool so we don't stall the daemon
+        // command-loop task while reading large files.
+        let owned_path = file_path.to_path_buf();
+        let decode_result = tokio::task::spawn_blocking(move || {
+            let file = fs::File::open(&owned_path)?;
+            Decoder::try_from(file).map_err(|e| SoundboardError::AudioDecode(e.to_string()))
+        })
+        .await
+        .map_err(|e| SoundboardError::AudioDecode(format!("decode task join: {e}")))?;
+
         let extension = file_path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("unknown");
 
-        match Decoder::try_from(file) {
+        match decode_result {
             Ok(source) => {
                 let layer = &mut self.layers[layer_index];
                 layer.current_file_path = Some(file_path.to_path_buf());
@@ -638,7 +717,10 @@ impl AudioPlayer {
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
                 "failed to decode '{}' (format: {}) on layer {}: {}",
-                file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                file_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown"),
                 extension,
                 layer_index,
                 err
@@ -857,7 +939,11 @@ mod tests {
 
     #[test]
     fn player_state_serde_round_trip() {
-        for state in [PlayerState::Stopped, PlayerState::Paused, PlayerState::Playing] {
+        for state in [
+            PlayerState::Stopped,
+            PlayerState::Paused,
+            PlayerState::Playing,
+        ] {
             let s = serde_json::to_string(&state).unwrap();
             let parsed: PlayerState = serde_json::from_str(&s).unwrap();
             assert_eq!(state, parsed);

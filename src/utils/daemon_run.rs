@@ -8,18 +8,15 @@ use crate::{
         socket::{Request, Response},
     },
     utils::{
+        auto_ptt,
         commands::parse_command,
         daemon::{
-            DAEMON_TCP_PORT, create_runtime_dir, get_audio_player, get_daemon_config,
-            get_runtime_dir, init_audio_player, is_daemon_running,
+            create_runtime_dir, get_audio_player, get_daemon_config, get_runtime_dir,
+            init_audio_player, is_daemon_running, DAEMON_TCP_PORT,
         },
     },
 };
-use std::{
-    fs,
-    sync::OnceLock,
-    time::Duration,
-};
+use std::{fs, sync::OnceLock, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     task::JoinHandle,
@@ -41,7 +38,8 @@ async fn bootstrap() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
         return Err("another instance is already running".into());
     }
 
-    get_daemon_config();
+    let cfg = get_daemon_config();
+    auto_ptt::set_config(cfg.auto_ptt.clone());
 
     init_audio_player().await?;
 
@@ -122,7 +120,8 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     if request_len > MAX_IPC_MESSAGE_SIZE {
         tracing::error!(
             "Rejected message: size {} exceeds maximum allowed {}",
-            request_len, MAX_IPC_MESSAGE_SIZE
+            request_len,
+            MAX_IPC_MESSAGE_SIZE
         );
         return;
     }
@@ -191,17 +190,28 @@ async fn commands_loop(listener: tokio::net::TcpListener) -> Result<()> {
 
 async fn player_loop() {
     loop {
-        let mut audio_player = get_audio_player().lock().await;
+        // Hold the lock only long enough to inspect state + restart looped
+        // playback. Sleeping with the guard held would block every IPC
+        // handler that needs the player.
+        let any_playing = {
+            let mut audio_player = get_audio_player().lock().await;
 
-        if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {
-            if let Some(ref file_path) = audio_player.current_file_path.clone() {
-                if let Err(e) = audio_player.play(file_path).await {
-                    tracing::error!("Failed to play looped file: {}", e);
+            if audio_player.get_state() == PlayerState::Stopped && audio_player.looped {
+                let file_path = audio_player.current_file_path.clone();
+                if let Some(ref file_path) = file_path {
+                    if let Err(e) = audio_player.play(file_path).await {
+                        tracing::error!("Failed to play looped file: {}", e);
+                    }
                 }
             }
-        }
 
-        drop(audio_player);
+            audio_player.has_active_audio()
+        };
+
+        // Drive auto-PTT outside the player lock — `tick` may emit
+        // `SendInput` calls and should not block IPC handlers.
+        auto_ptt::tick(any_playing);
+
         sleep(Duration::from_millis(100)).await;
     }
 }

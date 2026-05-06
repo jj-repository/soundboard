@@ -1,5 +1,4 @@
 use crate::{
-    MutexExt,
     error::{Result, SoundboardError},
     types::{
         audio_player::{LayerInfo, PlayerState},
@@ -8,13 +7,14 @@ use crate::{
         socket::{Request, Response},
     },
     utils::daemon::{make_request, wait_for_daemon},
+    MutexExt,
 };
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 pub fn get_gui_config() -> GuiConfig {
     GuiConfig::load_from_file().unwrap_or_else(|_| {
@@ -164,18 +164,44 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
             // Log errors only when they change (avoid spam)
             if let Some(ref err) = first_error {
                 if last_error_logged.as_ref() != Some(err) {
-                    tracing::error!("Daemon communication error ({} requests failed): {}", error_count, err);
+                    tracing::error!(
+                        "Daemon communication error ({} requests failed): {}",
+                        error_count,
+                        err
+                    );
                     last_error_logged = Some(err.clone());
                 }
             } else if last_error_logged.is_some() {
-                // Connection restored
-                tracing::error!("Daemon connection restored");
+                tracing::info!("Daemon connection restored");
                 last_error_logged = None;
             }
 
+            // Helper: parse a numeric daemon response and warn (once per
+            // resync) if the value isn't decodable. Silent fallbacks here
+            // hide protocol drift between GUI and daemon — log so the
+            // mismatch surfaces.
+            fn parse_or_warn<T: std::str::FromStr>(field: &str, raw: &str, fallback: T) -> T {
+                match raw.parse::<T>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        tracing::warn!("daemon returned unparseable {}: {:?}", field, raw);
+                        fallback
+                    }
+                }
+            }
+
             let state = match state_res.status {
-                true => serde_json::from_str::<PlayerState>(&state_res.message)
-                    .unwrap_or_default(),
+                true => match serde_json::from_str::<PlayerState>(&state_res.message) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(
+                            "daemon returned unparseable PlayerState: {} (raw: {:?})",
+                            e,
+                            state_res.message
+                        );
+                        PlayerState::default()
+                    }
+                },
                 false => PlayerState::default(),
             };
 
@@ -188,23 +214,23 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 false => false,
             };
             let volume = match volume_res.status {
-                true => volume_res.message.parse::<f32>().unwrap_or(1.0),
+                true => parse_or_warn::<f32>("volume", &volume_res.message, 1.0),
                 false => 1.0,
             };
             let gain = match gain_res.status {
-                true => gain_res.message.parse::<f32>().unwrap_or(1.0),
+                true => parse_or_warn::<f32>("gain", &gain_res.message, 1.0),
                 false => 1.0,
             };
             let mic_gain = match mic_gain_res.status {
-                true => mic_gain_res.message.parse::<f32>().unwrap_or(1.0),
+                true => parse_or_warn::<f32>("mic_gain", &mic_gain_res.message, 1.0),
                 false => 1.0,
             };
             let position = match position_res.status {
-                true => position_res.message.parse::<f32>().unwrap_or(0.0),
+                true => parse_or_warn::<f32>("position", &position_res.message, 0.0),
                 false => 0.0,
             };
             let duration = match duration_res.status {
-                true => duration_res.message.parse::<f32>().unwrap_or(0.0),
+                true => parse_or_warn::<f32>("duration", &duration_res.message, 0.0),
                 false => 0.0,
             };
             let current_input = match current_input_res.status {
@@ -254,12 +280,21 @@ pub fn start_app_state_thread(audio_player_state_shared: Arc<Mutex<AudioPlayerSt
                 false => HashMap::new(),
             };
             let looped = match looped_res.status {
-                true => looped_res.message.parse::<bool>().unwrap_or_default(),
+                true => parse_or_warn::<bool>("looped", &looped_res.message, false),
                 false => false,
             };
             let layers = match layers_info_res.status {
-                true => serde_json::from_str::<Vec<LayerInfo>>(&layers_info_res.message)
-                    .unwrap_or_default(),
+                true => match serde_json::from_str::<Vec<LayerInfo>>(&layers_info_res.message) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            "daemon returned unparseable layers info: {} (raw: {:?})",
+                            e,
+                            layers_info_res.message
+                        );
+                        Vec::new()
+                    }
+                },
                 false => Vec::new(),
             };
 

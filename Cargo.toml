@@ -1,8 +1,9 @@
 [package]
 name = "soundboard"
-version = "1.10.0"
+version = "1.13.0"
 edition = "2021"
-authors = ["arabian"]
+rust-version = "1.89"
+authors = ["jj-repository", "arabian (upstream)"]
 description = "Soundboard for Windows: routes audio files through a virtual microphone. Single binary with embedded daemon + optional CLI subcommand."
 readme = "README.md"
 repository = "https://github.com/jj-repository/soundboard"
@@ -40,6 +41,13 @@ thiserror = "1"
 
 tray-icon = "0.22"
 muda = "0.17"
+windows = { version = "0.62", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
+# MIDI input (note-on events) and gamepad input (button-press events) for
+# alternate hotkey bindings beyond keyboard/global hotkeys.
+midir = "0.10"
+gilrs = "0.11"
+# WAV writer for the toggle-recorder (mic + system-loopback capture).
+hound = "3"
 # Lock-free SPSC ring buffer for mic passthrough. Avoids locking the audio
 # callback against the playback thread at 48 kHz.
 ringbuf = "0.4"

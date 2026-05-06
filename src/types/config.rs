@@ -59,6 +59,16 @@ pub struct HotkeyConfig {
     pub play_pause: Option<HotkeyBinding>,
     pub stop: Option<HotkeyBinding>,
     pub enabled: bool,
+    /// MIDI input bindings (separate from keyboard hotkeys).
+    #[serde(default)]
+    pub midi: MidiBindings,
+    /// Gamepad input bindings (separate from keyboard hotkeys).
+    #[serde(default)]
+    pub gamepad: GamepadBindings,
+    /// Hotkey that toggles recording (start a clip if idle, stop+save if
+    /// recording). The capture source comes from the GUI session selector.
+    #[serde(default)]
+    pub record_toggle: Option<HotkeyBinding>,
 }
 
 impl Default for HotkeyConfig {
@@ -67,6 +77,9 @@ impl Default for HotkeyConfig {
             play_pause: Some(HotkeyBinding::new("KeyP", true, true, false, false)),
             stop: Some(HotkeyBinding::new("KeyS", true, true, false, false)),
             enabled: true,
+            midi: MidiBindings::default(),
+            gamepad: GamepadBindings::default(),
+            record_toggle: None,
         }
     }
 }
@@ -118,6 +131,12 @@ pub struct SoundMetadata {
     /// Individual volume for this sound (0.0 to 1.0, None = use global volume)
     #[serde(default)]
     pub volume: Option<f32>,
+    /// 0xRRGGBB packed colour for the button background. `None` = theme default.
+    #[serde(default)]
+    pub color_rgb: Option<u32>,
+    /// Material-icon name (e.g. "music_note", "favorite"). `None` = no icon.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 impl SoundMetadata {
@@ -145,7 +164,60 @@ impl SoundMetadata {
             && self.description.is_none()
             && self.tags.is_empty()
             && self.volume.is_none()
+            && self.color_rgb.is_none()
+            && self.icon.is_none()
     }
+}
+
+/// MIDI input bindings. Off by default; enable to listen on all detected
+/// MIDI input ports for note-on events that map to Play/Pause and Stop.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MidiBindings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// MIDI note number (0..=127) that triggers Play/Pause. e.g. 60 = C4.
+    #[serde(default)]
+    pub play_pause_note: Option<u8>,
+    /// MIDI note number (0..=127) that triggers Stop.
+    #[serde(default)]
+    pub stop_note: Option<u8>,
+}
+
+/// Gamepad input bindings. Off by default; enable to map a controller
+/// button to Play/Pause and Stop. Button names follow gilrs's enum
+/// (e.g. "south"/"a", "east"/"b", "start").
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GamepadBindings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub play_pause_button: Option<String>,
+    #[serde(default)]
+    pub stop_button: Option<String>,
+}
+
+/// Auto Push-to-Talk: simulate holding a key while audio plays so PTT-gated
+/// voice-chat apps actually transmit the soundboard's virtual-mic output.
+/// Off by default — synthetic input is dual-use and may be flagged by some
+/// kernel-level anti-cheats. Document this in the UI before enabling.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoPttConfig {
+    /// Master toggle.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Key code to hold while playing, in the same vocabulary as
+    /// `HotkeyBinding::key` (e.g. `"KeyV"`, `"F12"`, `"Space"`). `None`
+    /// disables the press regardless of `enabled`.
+    #[serde(default)]
+    pub key: Option<String>,
+}
+
+impl AutoPttConfig {
+    /// Const-constructible default for use in `static` initialization.
+    pub const DISABLED: Self = Self {
+        enabled: false,
+        key: None,
+    };
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -155,6 +227,8 @@ pub struct DaemonConfig {
     pub default_volume: Option<f32>,
     pub default_gain: Option<f32>,
     pub default_mic_gain: Option<f32>,
+    #[serde(default)]
+    pub auto_ptt: AutoPttConfig,
 }
 
 impl DaemonConfig {
@@ -224,6 +298,18 @@ pub struct GuiConfig {
     /// User dismissed the VB-Cable install prompt; do not nag again on launch.
     #[serde(default)]
     pub vbcable_install_skipped: bool,
+    /// File-list view mode: list (default) or grid (cart-wall buttons).
+    #[serde(default)]
+    pub view_mode: ViewMode,
+}
+
+/// File-list rendering style. `List` = compact one-row-per-sound (default),
+/// `Grid` = wrapped colour-coded buttons (cart-wall style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ViewMode {
+    #[default]
+    List,
+    Grid,
 }
 
 fn default_auto_check_updates() -> bool {
@@ -256,6 +342,7 @@ impl Default for GuiConfig {
             playlist_order: Vec::new(),
             auto_check_updates: default_auto_check_updates(),
             vbcable_install_skipped: false,
+            view_mode: ViewMode::default(),
         }
     }
 }
@@ -412,6 +499,7 @@ mod tests {
             default_volume: Some(0.75),
             default_gain: Some(1.5),
             default_mic_gain: Some(2.0),
+            auto_ptt: AutoPttConfig::default(),
         };
 
         let json = serde_json::to_string(&config).expect("serialize");
@@ -557,6 +645,9 @@ mod tests {
             play_pause: None,
             stop: None,
             enabled: false,
+            midi: MidiBindings::default(),
+            gamepad: GamepadBindings::default(),
+            record_toggle: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let loaded: HotkeyConfig = serde_json::from_str(&json).unwrap();
@@ -576,6 +667,7 @@ mod tests {
             default_volume: Some(0.6),
             default_gain: Some(1.2),
             default_mic_gain: Some(1.5),
+            auto_ptt: AutoPttConfig::default(),
         };
         original.save_to_path(&path).unwrap();
         let loaded = DaemonConfig::load_from_path(&path).unwrap();
@@ -626,7 +718,10 @@ mod tests {
             ..Default::default()
         };
         config.save_to_path(&path).unwrap();
-        assert_eq!(config.scale_factor, 1.0, "scale must be reset on save when save_scale_factor=false");
+        assert_eq!(
+            config.scale_factor, 1.0,
+            "scale must be reset on save when save_scale_factor=false"
+        );
         let loaded = GuiConfig::load_from_path(&path).unwrap();
         assert_eq!(loaded.scale_factor, 1.0);
     }

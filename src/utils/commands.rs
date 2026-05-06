@@ -83,7 +83,10 @@ mod tests {
     use tempfile::TempDir;
 
     fn req(name: &str) -> Request {
-        Request { name: name.to_string(), args: HashMap::new() }
+        Request {
+            name: name.to_string(),
+            args: HashMap::new(),
+        }
     }
 
     fn req_with(name: &str, args: &[(&str, &str)]) -> Request {
@@ -91,7 +94,10 @@ mod tests {
         for (k, v) in args {
             map.insert((*k).to_string(), (*v).to_string());
         }
-        Request { name: name.to_string(), args: map }
+        Request {
+            name: name.to_string(),
+            args: map,
+        }
     }
 
     // --- validate_audio_path tests preserved from the prior commands.rs ---
@@ -120,7 +126,8 @@ mod tests {
             File::create(&file_path).unwrap();
             assert!(
                 validate_audio_path(file_path.to_str().unwrap()).is_some(),
-                "Extension {} should be valid", ext
+                "Extension {} should be valid",
+                ext
             );
         }
     }
@@ -133,7 +140,8 @@ mod tests {
             File::create(&file_path).unwrap();
             assert!(
                 validate_audio_path(file_path.to_str().unwrap()).is_none(),
-                "Extension {} should be rejected", ext
+                "Extension {} should be rejected",
+                ext
             );
         }
     }
@@ -206,11 +214,27 @@ mod tests {
     #[test]
     fn parse_argless_commands() {
         for name in [
-            "ping", "pause", "resume", "toggle_pause", "stop", "is_paused",
-            "get_state", "get_volume", "get_gain", "get_mic_gain", "get_position",
-            "get_duration", "get_current_file_path", "get_input", "get_inputs",
-            "get_output", "get_outputs", "get_loop", "toggle_loop",
-            "stop_all_layers", "get_layers_info",
+            "ping",
+            "pause",
+            "resume",
+            "toggle_pause",
+            "stop",
+            "is_paused",
+            "get_state",
+            "get_volume",
+            "get_gain",
+            "get_mic_gain",
+            "get_position",
+            "get_duration",
+            "get_current_file_path",
+            "get_input",
+            "get_inputs",
+            "get_output",
+            "get_outputs",
+            "get_loop",
+            "toggle_loop",
+            "stop_all_layers",
+            "get_layers_info",
         ] {
             assert!(parse_command(&req(name)).is_some(), "{name} should parse");
         }
@@ -230,7 +254,10 @@ mod tests {
             parse_command(&req_with("set_volume", &[("volume", "0.5")])),
             Some(DaemonCommand::SetVolume(v)) if v == 0.5
         ));
-        assert!(parse_command(&req("set_volume")).is_none(), "missing arg rejected");
+        assert!(
+            parse_command(&req("set_volume")).is_none(),
+            "missing arg rejected"
+        );
         assert!(
             parse_command(&req_with("set_volume", &[("volume", "abc")])).is_none(),
             "non-numeric arg rejected"
@@ -243,9 +270,7 @@ mod tests {
             parse_command(&req_with("set_loop", &[("enabled", "true")])),
             Some(DaemonCommand::SetLoop(true))
         ));
-        assert!(
-            parse_command(&req_with("set_loop", &[("enabled", "maybe")])).is_none()
-        );
+        assert!(parse_command(&req_with("set_loop", &[("enabled", "maybe")])).is_none());
     }
 
     #[test]
@@ -263,14 +288,23 @@ mod tests {
 
     #[test]
     fn parse_set_layer_volume_strict() {
-        let ok = req_with("set_layer_volume", &[("layer_index", "1"), ("volume", "0.8")]);
+        let ok = req_with(
+            "set_layer_volume",
+            &[("layer_index", "1"), ("volume", "0.8")],
+        );
         assert!(matches!(
             parse_command(&ok),
-            Some(DaemonCommand::SetLayerVolume { index: 1, volume: 0.8 })
+            Some(DaemonCommand::SetLayerVolume {
+                index: 1,
+                volume: 0.8
+            })
         ));
         let missing = req_with("set_layer_volume", &[("volume", "0.5")]);
         assert!(parse_command(&missing).is_none());
-        let bad_idx = req_with("set_layer_volume", &[("layer_index", "abc"), ("volume", "0.5")]);
+        let bad_idx = req_with(
+            "set_layer_volume",
+            &[("layer_index", "abc"), ("volume", "0.5")],
+        );
         assert!(parse_command(&bad_idx).is_none());
     }
 

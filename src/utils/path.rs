@@ -6,9 +6,8 @@
 use std::path::{Path, PathBuf};
 
 /// Audio extensions accepted by the player. Lowercase, no leading dot.
-pub const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "wav", "ogg", "flac", "m4a", "aac", "opus",
-];
+pub const SUPPORTED_AUDIO_EXTENSIONS: &[&str] =
+    &["mp3", "wav", "ogg", "flac", "m4a", "aac", "opus"];
 
 /// Case-insensitive check that `path` ends in a supported audio extension.
 pub fn has_supported_audio_extension(path: &Path) -> bool {
@@ -60,10 +59,7 @@ pub fn validate_audio_path(path_str: &str) -> Option<PathBuf> {
         // path on Windows can include drive-letter colons (`C:`) and the
         // verbatim `\\?\C:\` prefix returned by `canonicalize`, which would
         // otherwise produce false positives.
-        let leaf = canonical
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let leaf = canonical.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if leaf.contains(':') {
             return None;
         }

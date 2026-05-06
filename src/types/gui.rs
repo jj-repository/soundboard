@@ -96,6 +96,32 @@ pub struct AppState {
     /// Cached sorted files list (invalidated when files change)
     /// This avoids sorting on every frame render
     pub sorted_files_cache: Option<Vec<PathBuf>>,
+
+    /// Whether the "Add from URL" (yt-dlp) modal is open.
+    pub show_url_grab_dialog: bool,
+    /// User-typed URL in the modal text field.
+    pub url_grab_input: String,
+    /// Last status from a running yt-dlp grab; cleared after acknowledging.
+    pub url_grab_status: Option<String>,
+    /// True while a yt-dlp download is in flight.
+    pub url_grab_in_progress: bool,
+
+    /// Source selected for the next/current toggle-recorder run.
+    /// Ephemeral GUI session state (not persisted to config).
+    pub record_source: RecordSourceUi,
+    /// Last status text from a recording action — shown in the toolbar
+    /// briefly after start/stop. Cleared by the next user action.
+    pub record_status_message: Option<String>,
+}
+
+/// GUI mirror of `crate::utils::recorder::RecordSource`. Kept as a separate
+/// type to avoid pulling the audio-stack crates into the `types::gui`
+/// module surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecordSourceUi {
+    #[default]
+    Mic,
+    SystemLoopback,
 }
 
 #[derive(Default, Debug, Clone)]

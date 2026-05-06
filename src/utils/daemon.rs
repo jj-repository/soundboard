@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{Mutex, OnceCell},
-    time::{Duration, sleep},
+    time::{sleep, Duration},
 };
 
 /// TCP port used for daemon IPC. Localhost only.
@@ -32,11 +32,23 @@ pub async fn init_audio_player() -> Result<()> {
     Ok(())
 }
 
-/// Get the audio player. Panics if init_audio_player() was not called first.
+/// Get the audio player. Panics if `init_audio_player()` was not called first
+/// — by construction, the daemon's `bootstrap()` guarantees init before the
+/// IPC listener accepts, so any reachable caller has already paid the init.
+/// Direct callers from outside the daemon path should use
+/// `try_get_audio_player()` instead.
+#[track_caller]
 pub fn get_audio_player() -> &'static Mutex<AudioPlayer> {
-    AUDIO_PLAYER
-        .get()
-        .expect("Audio player not initialized. Call init_audio_player() first.")
+    match AUDIO_PLAYER.get() {
+        Some(p) => p,
+        None => {
+            tracing::error!(
+                "audio player accessed before init_audio_player(); this is a bug — \
+                 the daemon should have initialised the player during bootstrap"
+            );
+            panic!("audio player not initialised; call init_audio_player() first");
+        }
+    }
 }
 
 /// Try to get the audio player, returning None if not initialized.
@@ -96,7 +108,7 @@ pub async fn wait_for_daemon() -> Result<()> {
     Ok(())
 }
 
-async fn send_and_receive(
+pub(crate) async fn send_and_receive(
     mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     request: Request,
 ) -> Result<Response> {
@@ -105,10 +117,13 @@ async fn send_and_receive(
     let request_data = serde_json::to_vec(&request)?;
     let request_len = request_data.len() as u32;
 
-    timeout(Duration::from_secs(2), stream.write_all(&request_len.to_le_bytes()))
-        .await
-        .map_err(|_| SoundboardError::Ipc("send timeout".into()))?
-        .map_err(|e| SoundboardError::Ipc(format!("failed to send request length: {e}")))?;
+    timeout(
+        Duration::from_secs(2),
+        stream.write_all(&request_len.to_le_bytes()),
+    )
+    .await
+    .map_err(|_| SoundboardError::Ipc("send timeout".into()))?
+    .map_err(|e| SoundboardError::Ipc(format!("failed to send request length: {e}")))?;
 
     timeout(Duration::from_secs(2), stream.write_all(&request_data))
         .await
@@ -148,9 +163,87 @@ pub async fn make_request(request: Request) -> Result<Response> {
     use tokio::time::timeout;
 
     let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
-    let stream = timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr))
-        .await
-        .map_err(|_| SoundboardError::DaemonTimeout)?
-        .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
+    let stream = timeout(
+        Duration::from_secs(2),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map_err(|_| SoundboardError::DaemonTimeout)?
+    .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
     send_and_receive(stream, request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    /// Drive `send_and_receive` against an in-memory duplex pipe acting as a
+    /// fake server. Exercises the length-prefix framing + response decoding
+    /// without binding a real port or initialising the audio backend.
+    #[tokio::test]
+    async fn send_and_receive_round_trip() {
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+
+        let server_task = tokio::spawn(async move {
+            // Read the request length + body the client sends.
+            let mut len_bytes = [0u8; 4];
+            tokio::io::AsyncReadExt::read_exact(&mut server, &mut len_bytes)
+                .await
+                .unwrap();
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            let mut body = vec![0u8; len];
+            tokio::io::AsyncReadExt::read_exact(&mut server, &mut body)
+                .await
+                .unwrap();
+
+            // Reply with a known Response.
+            let response = Response::new(true, "pong");
+            let bytes = serde_json::to_vec(&response).unwrap();
+            server
+                .write_all(&(bytes.len() as u32).to_le_bytes())
+                .await
+                .unwrap();
+            server.write_all(&bytes).await.unwrap();
+        });
+
+        let response = send_and_receive(client, Request::ping()).await.unwrap();
+        assert!(response.status);
+        assert_eq!(response.message, "pong");
+        server_task.await.unwrap();
+    }
+
+    /// A response advertising more than 1 MiB must be rejected before the
+    /// client allocates the buffer.
+    #[tokio::test]
+    async fn send_and_receive_rejects_oversized_response() {
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+
+        let server_task = tokio::spawn(async move {
+            let mut len_bytes = [0u8; 4];
+            tokio::io::AsyncReadExt::read_exact(&mut server, &mut len_bytes)
+                .await
+                .unwrap();
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            let mut body = vec![0u8; len];
+            tokio::io::AsyncReadExt::read_exact(&mut server, &mut body)
+                .await
+                .unwrap();
+
+            // Lie about the response size.
+            let huge = 2_u32 * 1024 * 1024;
+            server.write_all(&huge.to_le_bytes()).await.unwrap();
+        });
+
+        let err = send_and_receive(client, Request::ping())
+            .await
+            .expect_err("expected ResponseTooLarge");
+        match err {
+            SoundboardError::ResponseTooLarge { actual, max } => {
+                assert!(actual > max);
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+        server_task.await.unwrap();
+    }
 }

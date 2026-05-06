@@ -39,7 +39,10 @@ pub enum InstallStatus {
 
 /// True if a VB-Audio Virtual Cable output endpoint is currently registered.
 pub fn is_installed() -> bool {
-    use rodio::cpal::{self, traits::{DeviceTrait, HostTrait}};
+    use rodio::cpal::{
+        self,
+        traits::{DeviceTrait, HostTrait},
+    };
     let host = cpal::default_host();
     if let Ok(devices) = host.output_devices() {
         for device in devices {
@@ -136,20 +139,43 @@ fn extract_pack(zip_path: &Path, dest_dir: &Path) -> Result<()> {
         };
 
         let out_path = dest_dir.join(&entry_path);
-        // Belt-and-braces: ensure resolved path stays under dest_dir.
+        // Containment check BEFORE creating directories. Walking up to the
+        // nearest existing ancestor and canonicalising avoids the TOCTOU
+        // window where a symlink planted between mkdir and check could
+        // redirect extraction. Reject the whole entry if any ancestor is a
+        // symlink.
         let canonical_dest = std::fs::canonicalize(dest_dir)?;
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // canonicalize() requires the path to exist; check the *parent* instead.
-        if let Some(parent) = out_path.parent() {
-            let canonical_parent = std::fs::canonicalize(parent)?;
-            if !canonical_parent.starts_with(&canonical_dest) {
+            let mut ancestor = parent;
+            let canonical_existing = loop {
+                match std::fs::symlink_metadata(ancestor) {
+                    Ok(meta) => {
+                        if meta.file_type().is_symlink() {
+                            return Err(SoundboardError::Other(format!(
+                                "zip entry parent contains symlink: {}",
+                                ancestor.display()
+                            )));
+                        }
+                        break std::fs::canonicalize(ancestor)?;
+                    }
+                    Err(_) => match ancestor.parent() {
+                        Some(p) => ancestor = p,
+                        None => {
+                            return Err(SoundboardError::Other(format!(
+                                "zip entry has no existing ancestor under destination: {}",
+                                entry_path.display()
+                            )));
+                        }
+                    },
+                }
+            };
+            if !canonical_existing.starts_with(&canonical_dest) {
                 return Err(SoundboardError::Other(format!(
                     "zip entry escapes destination: {}",
                     entry_path.display()
                 )));
             }
+            std::fs::create_dir_all(parent)?;
         }
 
         if entry.is_dir() {
