@@ -925,11 +925,12 @@ impl SoundpadGui {
 }
 
 pub async fn run() -> Result<()> {
-    // Best-effort: start the daemon if the user launched the GUI directly.
-    // Failure here is non-fatal — the state-sync loop already waits for a
-    // live daemon and the user may have their own daemon setup.
-    if let Err(e) = soundboard::utils::daemon::spawn_daemon_if_not_running() {
-        tracing::warn!("Could not auto-spawn soundboard-daemon: {e}");
+    // Embed the daemon in this process. Failure is non-fatal: the state-sync
+    // loop already polls `wait_for_daemon`, and a pre-existing `--headless`
+    // instance is a legitimate "already running" case (we just connect to
+    // it instead).
+    if let Err(e) = soundboard::utils::daemon_run::start_in_process().await {
+        tracing::warn!("Could not start embedded daemon: {e}");
     }
 
     const ICON: &[u8] = include_bytes!("../../assets/icon.png");
@@ -939,26 +940,19 @@ pub async fn run() -> Result<()> {
         centered: true,
         hardware_acceleration: HardwareAcceleration::Preferred,
 
-        viewport: {
-            let builder = ViewportBuilder::default()
-                .with_inner_size(Vec2::new(1200.0, 800.0))
-                .with_min_inner_size(Vec2::new(800.0, 600.0))
-                .with_icon(
-                    from_png_bytes(ICON)
-                        .map_err(|e| soundboard::SoundboardError::Other(e.to_string()))?,
-                );
-
-            #[cfg(target_os = "linux")]
-            let builder = builder.with_app_id("dev.jjr.soundboard");
-
-            builder
-        },
+        viewport: ViewportBuilder::default()
+            .with_inner_size(Vec2::new(1200.0, 800.0))
+            .with_min_inner_size(Vec2::new(800.0, 600.0))
+            .with_icon(
+                from_png_bytes(ICON)
+                    .map_err(|e| soundboard::SoundboardError::Other(e.to_string()))?,
+            ),
 
         ..Default::default()
     };
 
     match run_native(
-        "Pipewire Soundpad",
+        "Soundboard",
         options,
         Box::new(|cc| {
             egui_material_icons::initialize(&cc.egui_ctx);

@@ -4,10 +4,6 @@
 //! validating + populating them, so `execute` can match exhaustively without
 //! per-call argument re-checks.
 
-#[cfg(target_os = "linux")]
-use crate::VIRTUAL_MIC_NAME;
-#[cfg(target_os = "linux")]
-use crate::utils::pipewire::get_all_devices;
 use crate::{
     types::{audio_player::PlayerState, socket::Response},
     utils::daemon::get_audio_player,
@@ -172,47 +168,19 @@ impl DaemonCommand {
             }
             DaemonCommand::GetCurrentInput => {
                 let p = get_audio_player().lock().await;
-                #[cfg(target_os = "linux")]
-                {
-                    match &p.current_input_device {
-                        Some(d) => Response::new(true, format!("{} - {}", d.name, d.nick)),
-                        None => Response::new(false, "No input device selected"),
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    match &p.current_input_device {
-                        Some(name) => Response::new(true, format!("{} - {}", name, name)),
-                        None => Response::new(false, "No input device selected"),
-                    }
+                match &p.current_input_device {
+                    Some(name) => Response::new(true, format!("{} - {}", name, name)),
+                    None => Response::new(false, "No input device selected"),
                 }
             }
             DaemonCommand::GetAllInputs => {
-                #[cfg(target_os = "linux")]
-                {
-                    match get_all_devices().await {
-                        Ok((inputs, _)) => {
-                            let s = inputs
-                                .into_iter()
-                                .filter(|d| d.name != VIRTUAL_MIC_NAME)
-                                .map(|d| format!("{} - {}", d.name, d.nick))
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            Response::new(true, s)
-                        }
-                        Err(e) => Response::new(false, format!("Failed to get input devices: {}", e)),
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    let devices = crate::types::audio_player::get_input_devices();
-                    let mut entries: Vec<String> = devices
-                        .keys()
-                        .map(|n| format!("{} - {}", n, n))
-                        .collect();
-                    entries.sort();
-                    Response::new(true, entries.join("; "))
-                }
+                let devices = crate::types::audio_player::get_input_devices();
+                let mut entries: Vec<String> = devices
+                    .keys()
+                    .map(|n| format!("{} - {}", n, n))
+                    .collect();
+                entries.sort();
+                Response::new(true, entries.join("; "))
             }
             DaemonCommand::SetCurrentInput(name) => {
                 let mut p = get_audio_player().lock().await;

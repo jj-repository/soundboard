@@ -1,4 +1,7 @@
-use soundboard::{
+//! Embedded daemon runtime. Was a separate `soundboard-daemon` binary; now
+//! runs in the same process as the GUI (or as a `--headless` invocation).
+
+use crate::{
     error::Result,
     types::{
         audio_player::PlayerState,
@@ -7,25 +10,31 @@ use soundboard::{
     utils::{
         commands::parse_command,
         daemon::{
-            create_runtime_dir, get_audio_player, get_daemon_config, get_runtime_dir,
-            init_audio_player, is_daemon_running,
+            DAEMON_TCP_PORT, create_runtime_dir, get_audio_player, get_daemon_config,
+            get_runtime_dir, init_audio_player, is_daemon_running,
         },
     },
 };
-#[cfg(target_os = "linux")]
-use soundboard::utils::{
-    daemon::link_player_to_virtual_mic,
-    pipewire::create_virtual_mic,
+use std::{
+    fs,
+    sync::OnceLock,
+    time::Duration,
 };
-use std::{fs, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    task::JoinHandle,
     time::{sleep, timeout},
 };
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    soundboard::utils::logging::init();
+/// Holds the daemon lock file for the lifetime of the process.
+static LOCK_FILE: OnceLock<fs::File> = OnceLock::new();
+
+/// Initialise the embedded daemon: acquire the cross-process lock, init the
+/// audio player, and start the TCP IPC listener + player loop. Returns the
+/// background task handles; callers can either await them (`run_headless`)
+/// or drop them to keep the daemon running for the rest of the process
+/// lifetime (GUI embed).
+async fn bootstrap() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
     create_runtime_dir()?;
 
     if is_daemon_running()? {
@@ -34,87 +43,53 @@ async fn main() -> Result<()> {
 
     get_daemon_config();
 
-    #[cfg(target_os = "linux")]
-    create_virtual_mic()?;
-
     init_audio_player().await?;
 
-    #[cfg(target_os = "linux")]
-    link_player_to_virtual_mic().await?;
-
     let runtime_dir = get_runtime_dir();
+    let lock_file = fs::File::create(runtime_dir.join("daemon.lock"))?;
+    lock_file.lock()?;
+    let _ = LOCK_FILE.set(lock_file);
 
-    let _lock_file = {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(runtime_dir.join("daemon.lock"))?
-        }
-        #[cfg(target_os = "windows")]
-        {
-            fs::File::create(runtime_dir.join("daemon.lock"))?
-        }
-    };
-    _lock_file.lock()?;
+    let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Daemon started. Listening on {}", addr);
 
-    #[cfg(target_os = "linux")]
-    let listener = {
-        let socket_path = runtime_dir.join("daemon.sock");
-        // Remove stale socket unconditionally (avoids TOCTOU race)
-        let _ = fs::remove_file(&socket_path);
-
-        let listener = tokio::net::UnixListener::bind(&socket_path)?;
-
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
-
-        tracing::info!(
-            "Daemon started. Listening on {}",
-            socket_path.to_str().unwrap_or_default()
-        );
-
-        listener
-    };
-
-    #[cfg(target_os = "windows")]
-    let listener = {
-        use soundboard::utils::daemon::DAEMON_TCP_PORT;
-        let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-        tracing::info!("Daemon started. Listening on {}", addr);
-        listener
-    };
-
-    let commands_loop_handle = tokio::spawn(async move {
+    let commands_handle = tokio::spawn(async move {
         if let Err(e) = commands_loop(listener).await {
             tracing::error!("Commands loop error: {}", e);
         }
     });
 
-    let player_loop_handle = tokio::spawn(async {
+    let player_handle = tokio::spawn(async {
         player_loop().await;
     });
 
+    Ok((commands_handle, player_handle))
+}
+
+/// Run the daemon and return only when one of the loops exits. Used by
+/// `--headless` mode.
+pub async fn run_headless() -> Result<()> {
+    let (commands_handle, player_handle) = bootstrap().await?;
+
     tokio::select! {
-        _ = commands_loop_handle => {
+        _ = commands_handle => {
             tracing::error!("Commands loop was finished, stopping program...");
         }
-        _ = player_loop_handle => {
+        _ = player_handle => {
             tracing::error!("Audio Player loop was finished, stopping program...");
         }
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let socket_path = get_runtime_dir().join("daemon.sock");
-        let _ = fs::remove_file(&socket_path);
-    }
+    Ok(())
+}
 
+/// Start the daemon as background tasks and return immediately. Used by the
+/// GUI to embed the daemon in-process; the loops run for the rest of the
+/// GUI's lifetime.
+pub async fn start_in_process() -> Result<()> {
+    let (_commands_handle, _player_handle) = bootstrap().await?;
+    // Detach: the lock file in LOCK_FILE keeps the lock until process exit.
     Ok(())
 }
 
@@ -145,7 +120,10 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let request_len = u32::from_le_bytes(len_bytes) as usize;
 
     if request_len > MAX_IPC_MESSAGE_SIZE {
-        tracing::error!("Rejected message: size {} exceeds maximum allowed {}", request_len, MAX_IPC_MESSAGE_SIZE);
+        tracing::error!(
+            "Rejected message: size {} exceeds maximum allowed {}",
+            request_len, MAX_IPC_MESSAGE_SIZE
+        );
         return;
     }
 
@@ -204,15 +182,6 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     }
 }
 
-#[cfg(target_os = "linux")]
-async fn commands_loop(listener: tokio::net::UnixListener) -> Result<()> {
-    loop {
-        let (stream, _addr) = listener.accept().await?;
-        tokio::spawn(handle_connection(stream));
-    }
-}
-
-#[cfg(target_os = "windows")]
 async fn commands_loop(listener: tokio::net::TcpListener) -> Result<()> {
     loop {
         let (stream, _addr) = listener.accept().await?;

@@ -55,8 +55,16 @@ pub fn validate_audio_path(path_str: &str) -> Option<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        let s = canonical.to_string_lossy();
-        if s.char_indices().skip(2).any(|(_, c)| c == ':') {
+        // NTFS ADS syntax (`filename:streamname`) lives in the leaf
+        // component. Inspect only the file name; the rest of the canonical
+        // path on Windows can include drive-letter colons (`C:`) and the
+        // verbatim `\\?\C:\` prefix returned by `canonicalize`, which would
+        // otherwise produce false positives.
+        let leaf = canonical
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if leaf.contains(':') {
             return None;
         }
     }

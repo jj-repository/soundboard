@@ -6,10 +6,6 @@ use crate::{
         socket::{Request, Response},
     },
 };
-#[cfg(target_os = "linux")]
-use crate::{DAEMON_OUTPUT_NAME, VIRTUAL_MIC_NAME};
-#[cfg(target_os = "linux")]
-use crate::utils::pipewire::{create_link, get_all_devices};
 use std::fs;
 use std::path::PathBuf;
 use tokio::{
@@ -18,8 +14,7 @@ use tokio::{
     time::{Duration, sleep},
 };
 
-/// TCP port used for daemon IPC on Windows
-#[cfg(target_os = "windows")]
+/// TCP port used for daemon IPC. Localhost only.
 pub const DAEMON_TCP_PORT: u16 = 19735;
 
 static AUDIO_PLAYER: OnceCell<Mutex<AudioPlayer>> = OnceCell::const_new();
@@ -58,72 +53,11 @@ pub fn get_daemon_config() -> DaemonConfig {
     })
 }
 
-#[cfg(target_os = "linux")]
-pub async fn link_player_to_virtual_mic() -> Result<()> {
-    let (input_devices, output_devices) = get_all_devices().await?;
-
-    let soundboard_daemon_output = match output_devices
-        .into_iter()
-        .find(|d| d.name == DAEMON_OUTPUT_NAME)
-    {
-        Some(device) => device,
-        None => {
-            tracing::error!("Could not find soundboard-daemon output device, skipping device linking");
-            return Ok(());
-        }
-    };
-
-    let soundboard_daemon_input = match input_devices
-        .into_iter()
-        .find(|d| d.name == VIRTUAL_MIC_NAME)
-    {
-        Some(device) => device,
-        None => {
-            tracing::error!("Could not find soundboard-daemon input device, skipping device linking");
-            return Ok(());
-        }
-    };
-
-    match (
-        &soundboard_daemon_output.output_fl,
-        &soundboard_daemon_output.output_fr,
-        &soundboard_daemon_input.input_fl,
-        &soundboard_daemon_input.input_fr,
-    ) {
-        (Some(output_fl), Some(output_fr), Some(input_fl), Some(input_fr)) => {
-            create_link(
-                output_fl.clone(),
-                output_fr.clone(),
-                input_fl.clone(),
-                input_fr.clone(),
-            )?;
-        }
-        (out_fl, out_fr, in_fl, in_fr) => {
-            tracing::error!(
-                "Required ports not available (output_fl: {}, output_fr: {}, input_fl: {}, input_fr: {}), skipping device linking",
-                out_fl.is_some(),
-                out_fr.is_some(),
-                in_fl.is_some(),
-                in_fr.is_some()
-            );
-        }
-    }
-
-    Ok(())
-}
-
 pub fn get_runtime_dir() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    {
-        dirs::runtime_dir().unwrap_or(PathBuf::from("/run/soundboard"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            .join("soundboard")
-            .join("run")
-    }
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+        .join("soundboard")
+        .join("run")
 }
 
 pub fn create_runtime_dir() -> Result<()> {
@@ -131,20 +65,14 @@ pub fn create_runtime_dir() -> Result<()> {
     if !runtime_dir.exists() {
         fs::create_dir_all(&runtime_dir)?;
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))?;
-    }
-
     Ok(())
 }
 
+/// Returns true if another process holds the daemon lock — i.e. an embedded
+/// daemon (GUI or `--headless`) is already running. The advisory lock is
+/// what tells us whether the daemon is alive; the lock file contents are
+/// irrelevant, so do not truncate and race the running holder's open handle.
 pub fn is_daemon_running() -> Result<bool> {
-    // The advisory lock is what tells us whether the daemon is alive; the lock
-    // file contents are irrelevant, so do not truncate and race the running
-    // daemon's open handle.
     let lock_file = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -165,77 +93,6 @@ pub async fn wait_for_daemon() -> Result<()> {
         sleep(Duration::from_millis(100)).await;
     }
 
-    Ok(())
-}
-
-/// If no daemon is currently running, spawn `soundboard-daemon` from the same
-/// directory as the current executable. Detached so closing the GUI does not
-/// tear the daemon down.
-///
-/// Returns Ok(()) if a daemon is already running or was spawned successfully.
-/// Returns Err if the daemon binary can't be located or the spawn itself
-/// fails; callers can still proceed — the GUI has a `wait_for_daemon` poll
-/// loop that tolerates a delayed startup.
-pub fn spawn_daemon_if_not_running() -> Result<()> {
-    if is_daemon_running().unwrap_or(false) {
-        return Ok(());
-    }
-
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("could not resolve current exe directory")?;
-
-    let daemon_name = if cfg!(target_os = "windows") {
-        "soundboard-daemon.exe"
-    } else {
-        "soundboard-daemon"
-    };
-    let daemon_path = exe_dir.join(daemon_name);
-
-    if !daemon_path.is_file() {
-        return Err(format!(
-            "soundboard-daemon not found next to GUI at {}",
-            daemon_path.display()
-        )
-        .into());
-    }
-
-    let mut cmd = std::process::Command::new(&daemon_path);
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS: child has no console attached and survives
-        // parent exit. CREATE_NEW_PROCESS_GROUP: child is not killed when
-        // the GUI's process group receives Ctrl+C.
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // SAFETY: setsid() is async-signal-safe and the only non-trivial
-        // operation performed between fork and exec. It detaches the child
-        // from the parent's controlling terminal/session so the daemon
-        // isn't killed by SIGHUP when the GUI (or its terminal) exits.
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-
-    cmd.spawn()?;
-    tracing::info!("Spawned soundboard-daemon from {}", daemon_path.display());
     Ok(())
 }
 
@@ -290,22 +147,10 @@ async fn send_and_receive(
 pub async fn make_request(request: Request) -> Result<Response> {
     use tokio::time::timeout;
 
-    #[cfg(target_os = "linux")]
-    {
-        let socket_path = get_runtime_dir().join("daemon.sock");
-        let stream = timeout(Duration::from_secs(2), tokio::net::UnixStream::connect(socket_path))
-            .await
-            .map_err(|_| SoundboardError::DaemonTimeout)?
-            .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
-        send_and_receive(stream, request).await
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
-        let stream = timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr))
-            .await
-            .map_err(|_| SoundboardError::DaemonTimeout)?
-            .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
-        send_and_receive(stream, request).await
-    }
+    let addr = format!("127.0.0.1:{}", DAEMON_TCP_PORT);
+    let stream = timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr))
+        .await
+        .map_err(|_| SoundboardError::DaemonTimeout)?
+        .map_err(|e| SoundboardError::DaemonConnect(e.to_string()))?;
+    send_and_receive(stream, request).await
 }

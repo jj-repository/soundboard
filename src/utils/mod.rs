@@ -1,9 +1,9 @@
+pub mod cli_run;
 pub mod commands;
 pub mod config;
 pub mod daemon;
+pub mod daemon_run;
 pub mod gui;
 pub mod logging;
 pub mod path;
-#[cfg(target_os = "linux")]
-pub mod pipewire;
 pub mod updater;

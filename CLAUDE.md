@@ -1,6 +1,6 @@
 # Soundboard
 
-Cross-platform Rust soundboard — plays audio through your microphone. Daemon architecture with GUI and CLI clients. Stack: Rust, egui/eframe, rodio, PipeWire (Linux), VB-Audio (Windows), Tokio.
+Windows Rust soundboard — single binary that plays audio through your mic via VB-Audio Virtual Cable. Daemon embedded in the GUI process; CLI is a subcommand. Stack: Rust, egui/eframe, rodio, CPAL, Tokio.
 v1.10
 
 Docs: .claude/index.md

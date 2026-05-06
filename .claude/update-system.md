@@ -1,6 +1,6 @@
 # Update System
 
-**Status:** Fully implemented with download + progress UI. Missing: auto-check on startup, `auto_check_updates` toggle.
+**Status:** Implemented with download + progress UI. Missing: auto-check on startup, `auto_check_updates` toggle.
 
 ## Files
 - `src/utils/updater.rs` — core logic
@@ -21,8 +21,9 @@ pub enum UpdateStatus {
 
 ## GitHub
 Repo: `jj-repository/soundboard`
-Platform asset detection: .tar.gz/.deb (Linux), .zip/.msi (Windows)
+Platform asset detection: .zip / .msi / .exe (Windows-only after refactor); rejects assets with "linux" in the name.
 semver version compare, reqwest HTTP, temp dir storage.
+Allowed download hosts: `github.com`, `objects.githubusercontent.com`.
 
 ## Missing
 - No `auto_check_updates` config field

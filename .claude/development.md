@@ -1,30 +1,34 @@
 # Development
 
 ## Commands
-```bash
+```powershell
 cargo build --release
-cargo run --release --bin soundboard-gui
-cargo run --release --bin soundboard-daemon
-cargo run --release --bin soundboard-cli -- <command>
+cargo run --release                 # GUI + embedded engine
+cargo run --release -- cli get volume   # CLI subcommand
+cargo run --release -- --headless       # engine only
 cargo test
 ```
 
 ## Dependencies
 ```toml
-tokio = "1.48.0"       # full
-egui/eframe = "0.33.3"
-rodio = "0.21.1"       # audio playback
-pipewire = "0.9.2"     # PipeWire bindings
-reqwest = "0.12"
+tokio = "1.51"          # full
+egui/eframe = "0.34.1"
+rodio = "0.22"          # audio playback
+cpal (via rodio)        # mic capture, output device enumeration
+ringbuf = "0.4"         # SPSC mic-passthrough ring
+reqwest = "0.12"        # update fetcher
 semver = "1.0"
-global-hotkey = "0.6"
-ksni = "0.3"           # tray Linux
-tray-icon + muda       # tray Windows
+global-hotkey = "0.7"
+tray-icon + muda        # Windows tray
 ```
 
-## Tests (91 total)
+## Tests
 - `src/utils/commands.rs` — path validation, command parsing
+- `src/utils/path.rs` — symlink/ADS rejection, base-dir confinement
 - `src/utils/config.rs` — config path
+- `src/types/audio_player.rs` — gain clamping, layer info, serde roundtrip
+- `src/types/socket.rs` — IPC roundtrip
+- `src/types/config.rs` — config schema
 
 ## Common Tasks
 
@@ -39,6 +43,5 @@ tray-icon + muda       # tray Windows
 - Status enum: `src/types/gui.rs`
 - Logic: `src/utils/updater.rs`
 
-## Platform Notes
-**Linux:** PipeWire routing, systemd service in `assets/`, ksni tray, Unix socket
-**Windows:** VB-Audio Virtual Cable; CPAL captures real mic → mixes with soundboard → VB-Audio output; mic gain via passthrough sink volume; input device enum/selection via CPAL; tray-icon+muda; TCP IPC
+## Platform
+Windows only. VB-Audio Virtual Cable handles mic routing; CPAL captures real mic → mixes with soundboard playback → VB-Audio output device. Tray via tray-icon + muda. IPC over TCP localhost:19735.

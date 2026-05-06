@@ -1,5 +1,9 @@
+//! CLI subcommand runtime. Was a separate `soundboard-cli` binary; now a
+//! `cli ...` subcommand of the single `soundboard` exe.
+
 use clap::{Parser, Subcommand};
-use soundboard::{
+
+use crate::{
     error::Result,
     types::socket::Request,
     utils::daemon::{make_request, wait_for_daemon},
@@ -7,7 +11,7 @@ use soundboard::{
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(name = "soundboard cli", version, about, long_about = None)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -20,12 +24,12 @@ enum Commands {
         #[clap(subcommand)]
         action: Actions,
     },
-    /// Get information from the player (is paused, volume, position, duration, state, current-file-path, input, inputs)
+    /// Get information from the player
     Get {
         #[clap(subcommand)]
         parameter: GetCommands,
     },
-    /// Set information in the player (volume, position, input)
+    /// Set information in the player
     Set {
         #[clap(subcommand)]
         parameter: SetCommands,
@@ -54,50 +58,43 @@ enum Actions {
 
 #[derive(Subcommand, Debug)]
 enum GetCommands {
-    /// Check if the player is paused
     IsPaused,
-    /// Playback volume
     Volume,
-    /// Output gain/boost (1.0 = normal, 2.0 = 2x boost)
     Gain,
-    /// Mic passthrough gain (boost your voice)
     MicGain,
-    /// Playback position (in seconds)
     Position,
-    /// Duration of the current file
     Duration,
-    /// Player state (Playing, Paused or Stopped)
     State,
-    /// Current playing file path
     CurrentFilePath,
-    /// Current audio input
     Input,
-    /// All audio inputs
     Inputs,
-    /// Is loop enabled (true or false)
     Loop,
 }
 
 #[derive(Subcommand, Debug)]
 enum SetCommands {
-    /// Playback volume
     Volume { volume: f32 },
-    /// Output gain/boost (1.0 = normal, 2.0 = 2x boost, max 5.0)
     Gain { gain: f32 },
-    /// Mic passthrough gain (boost your voice, 0.5 - 3.0)
     MicGain { mic_gain: f32 },
-    /// Playback position (in seconds)
     Position { position: f32 },
-    /// Audio input id (see soundboard-cli get inputs)
     Input { name: String },
-    /// Enable or disable loop (true or false)
     Loop { enabled: String },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    soundboard::utils::logging::init();
-    let cli = Cli::parse();
+/// Entry point invoked from `main.rs` when argv[1] == "cli". `argv` is the
+/// full process argv, including the program name; clap re-parses it (with
+/// "cli" stripped) so its error messages reference `soundboard cli ...`.
+pub async fn run(argv: Vec<String>) -> Result<()> {
+    // Strip the leading "cli" subcommand token and feed clap a synthetic
+    // argv[0] so generated help/usage reads `soundboard cli ...` instead of
+    // `soundboard.exe ...`.
+    let mut filtered: Vec<String> = Vec::with_capacity(argv.len());
+    filtered.push("soundboard cli".to_string());
+    for arg in argv.iter().skip(2) {
+        filtered.push(arg.clone());
+    }
+
+    let cli = Cli::parse_from(filtered);
 
     wait_for_daemon().await?;
 

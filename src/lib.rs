@@ -4,11 +4,6 @@ pub mod utils;
 
 pub use error::{Result, SoundboardError};
 
-/// PipeWire node name for the virtual microphone
-pub const VIRTUAL_MIC_NAME: &str = "soundboard-virtual-mic";
-/// PipeWire node name for the daemon's audio output
-pub const DAEMON_OUTPUT_NAME: &str = "alsa_playback.soundboard-daemon";
-
 use std::sync::{Mutex, MutexGuard};
 
 /// Extension trait for Mutex that handles poisoning gracefully

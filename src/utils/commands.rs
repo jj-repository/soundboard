@@ -196,17 +196,6 @@ mod tests {
         assert!(validate_audio_path(file.to_str().unwrap()).is_some());
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_validate_audio_path_symlink_to_non_audio() {
-        let temp_dir = TempDir::new().unwrap();
-        let target = temp_dir.path().join("secret.txt");
-        File::create(&target).unwrap();
-        let link = temp_dir.path().join("trick.mp3");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        assert!(validate_audio_path(link.to_str().unwrap()).is_none());
-    }
-
     #[test]
     fn test_validate_audio_path_whitespace_only() {
         assert!(validate_audio_path("   ").is_none());

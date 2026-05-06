@@ -85,9 +85,6 @@ pub async fn check_for_updates() -> Result<UpdateInfo> {
         _ => false,
     };
 
-    // Find the appropriate asset for the current platform. The Windows archive
-    // is just "soundboard.zip" with no platform suffix, so we exclude any
-    // asset that self-identifies as Linux to avoid a false positive.
     let download_url = release
         .assets
         .iter()
@@ -96,18 +93,11 @@ pub async fn check_for_updates() -> Result<UpdateInfo> {
             if name.ends_with(".sha256") {
                 return false;
             }
-            #[cfg(target_os = "linux")]
-            {
-                name.contains("linux") || name.ends_with(".tar.gz") || name.ends_with(".deb")
-            }
-            #[cfg(target_os = "windows")]
-            {
-                !name.contains("linux")
-                    && (name.contains("windows")
-                        || name.ends_with(".exe")
-                        || name.ends_with(".zip")
-                        || name.ends_with(".msi"))
-            }
+            !name.contains("linux")
+                && (name.contains("windows")
+                    || name.ends_with(".exe")
+                    || name.ends_with(".zip")
+                    || name.ends_with(".msi"))
         })
         .map(|a| a.browser_download_url.clone());
 

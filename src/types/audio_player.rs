@@ -1,18 +1,9 @@
-#[cfg(target_os = "linux")]
-use crate::{
-    types::pipewire::{AudioDevice, DeviceType, Terminate},
-    utils::{
-        pipewire::{create_link, get_all_devices, get_device, invalidate_device_cache},
-    },
-};
 use crate::error::{Result, SoundboardError};
 use crate::utils::daemon::get_daemon_config;
 use crate::utils::path::has_supported_audio_extension;
 use rodio::{cpal, Decoder, Player, Source};
-use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
-#[cfg(target_os = "windows")]
-use rodio::cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -54,8 +45,7 @@ pub fn get_default_output_device() -> Option<String> {
         .map(|desc| desc.name().to_string())
 }
 
-/// Get all available input devices (for mic selection on Windows)
-#[cfg(target_os = "windows")]
+/// Get all available input devices (for mic selection)
 pub fn get_input_devices() -> HashMap<String, String> {
     let mut devices = HashMap::new();
     let host = cpal::default_host();
@@ -104,8 +94,8 @@ pub const NUM_AUDIO_LAYERS: usize = 4;
 
 /// Defense-in-depth validation for paths handed to the player. The IPC parser
 /// already runs `validate_audio_path`, but the player API can be reached from
-/// anywhere in the binary (looped playback in daemon, future GUI direct
-/// hooks), so re-check here.
+/// anywhere in the binary (looped playback, future GUI direct hooks), so
+/// re-check here.
 fn validate_audio_file(file_path: &Path) -> Result<()> {
     let meta = std::fs::symlink_metadata(file_path)
         .map_err(|_| SoundboardError::FileNotFound(file_path.to_path_buf()))?;
@@ -145,28 +135,24 @@ pub fn clamp_layer_volume(v: f32) -> f32 {
     if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
 }
 
-/// Lock-free SPSC ring buffer wiring for the Windows mic passthrough.
+/// Lock-free SPSC ring buffer wiring for the mic passthrough.
 /// The cpal input callback pushes samples; the rodio output thread pops
 /// them. Dropping the per-sample Mutex avoids priority inversion and the
 /// per-sample lock acquisition at 48 kHz.
-#[cfg(target_os = "windows")]
 use ringbuf::{
     HeapRb,
     traits::{Consumer as ConsumerTrait, Producer as ProducerTrait, Split},
 };
 
-#[cfg(target_os = "windows")]
 type MicConsumer = <HeapRb<f32> as Split>::Cons;
 
 /// Custom rodio Source that reads captured mic audio from a lock-free ring.
-#[cfg(target_os = "windows")]
 struct MicSource {
     consumer: MicConsumer,
     sample_rate: std::num::NonZero<u32>,
     channels: std::num::NonZero<u16>,
 }
 
-#[cfg(target_os = "windows")]
 impl Iterator for MicSource {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
@@ -175,7 +161,6 @@ impl Iterator for MicSource {
     }
 }
 
-#[cfg(target_os = "windows")]
 impl Source for MicSource {
     fn current_span_len(&self) -> Option<usize> { None }
     fn channels(&self) -> std::num::NonZero<u16> { self.channels }
@@ -185,19 +170,11 @@ impl Source for MicSource {
 
 pub struct AudioPlayer {
     _stream_handle: MixerDeviceSink,
-    sink: Player, // Main player for primary playback
-    layers: Vec<AudioLayer>, // Additional layers for mixing
+    sink: Player,
+    layers: Vec<AudioLayer>,
 
-    #[cfg(target_os = "linux")]
-    input_link_sender: Option<pipewire::channel::Sender<Terminate>>,
-    #[cfg(target_os = "linux")]
-    pub current_input_device: Option<AudioDevice>,
-
-    #[cfg(target_os = "windows")]
     pub current_input_device: Option<String>,
-    #[cfg(target_os = "windows")]
     mic_stop_sender: Option<std::sync::mpsc::Sender<()>>,
-    #[cfg(target_os = "windows")]
     mic_sink: Player,
 
     pub current_output_device: Option<String>,
@@ -218,24 +195,8 @@ impl AudioPlayer {
         let default_volume = daemon_config.default_volume.unwrap_or(1.0);
         let default_gain = daemon_config.default_gain.unwrap_or(1.0);
         let default_mic_gain = daemon_config.default_mic_gain.unwrap_or(1.0);
-
-        #[cfg(target_os = "linux")]
-        let default_input_device = {
-            let mut device: Option<AudioDevice> = None;
-            if let Some(name) = daemon_config.default_input_name {
-                if let Ok(d) = get_device(&name).await {
-                    if d.device_type == DeviceType::Input {
-                        device = Some(d);
-                    }
-                }
-            }
-            device
-        };
-
-        #[cfg(target_os = "windows")]
         let default_input_name = daemon_config.default_input_name;
 
-        // Try to use configured output device, fall back to default
         let (stream_handle, current_output_device) =
             if let Some(ref output_name) = daemon_config.default_output_name {
                 match Self::create_stream_for_device(output_name) {
@@ -252,27 +213,16 @@ impl AudioPlayer {
                     }
                 }
             } else {
-                // On Windows, try to auto-detect VB-Audio Virtual Cable
-                #[cfg(target_os = "windows")]
-                {
-                    let vb_cable = Self::find_virtual_cable();
-                    if let Some(ref cable_name) = vb_cable {
-                        match Self::create_stream_for_device(cable_name) {
-                            Ok(stream) => (stream, Some(cable_name.clone())),
-                            Err(_) => (
-                                DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
-                                get_default_output_device(),
-                            ),
-                        }
-                    } else {
-                        (
+                let vb_cable = Self::find_virtual_cable();
+                if let Some(ref cable_name) = vb_cable {
+                    match Self::create_stream_for_device(cable_name) {
+                        Ok(stream) => (stream, Some(cable_name.clone())),
+                        Err(_) => (
                             DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                             get_default_output_device(),
-                        )
+                        ),
                     }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
+                } else {
                     (
                         DeviceSinkBuilder::open_default_sink().map_err(|e| SoundboardError::AudioDevice(e.to_string()))?,
                         get_default_output_device(),
@@ -284,38 +234,24 @@ impl AudioPlayer {
         let sink = Player::connect_new(mixer);
         sink.set_volume(default_volume * default_gain);
 
-        // Initialize audio layers for mixing
         let mut layers = Vec::with_capacity(NUM_AUDIO_LAYERS);
         for _ in 0..NUM_AUDIO_LAYERS {
             layers.push(AudioLayer::new(mixer));
         }
 
-        // Windows: create dedicated sink for mic passthrough audio
-        #[cfg(target_os = "windows")]
         let mic_sink = {
             let s = Player::connect_new(mixer);
             s.stop();
             s
         };
 
-        #[cfg(target_os = "linux")]
-        let has_input_device = default_input_device.is_some();
-
         let mut audio_player = AudioPlayer {
             _stream_handle: stream_handle,
             sink,
             layers,
 
-            #[cfg(target_os = "linux")]
-            input_link_sender: None,
-            #[cfg(target_os = "linux")]
-            current_input_device: default_input_device,
-
-            #[cfg(target_os = "windows")]
             current_input_device: default_input_name,
-            #[cfg(target_os = "windows")]
             mic_stop_sender: None,
-            #[cfg(target_os = "windows")]
             mic_sink,
 
             current_output_device,
@@ -330,13 +266,6 @@ impl AudioPlayer {
             looped: false,
         };
 
-        #[cfg(target_os = "linux")]
-        if has_input_device {
-            audio_player.link_devices().await?;
-            audio_player.apply_mic_gain();
-        }
-
-        #[cfg(target_os = "windows")]
         if audio_player.current_input_device.is_some() {
             if let Err(e) = audio_player.start_mic_passthrough() {
                 tracing::error!("Failed to start mic passthrough: {}", e);
@@ -367,8 +296,7 @@ impl AudioPlayer {
         Err(SoundboardError::DeviceNotFound(device_name.to_string()))
     }
 
-    /// On Windows, try to find VB-Audio Virtual Cable output device
-    #[cfg(target_os = "windows")]
+    /// Try to find VB-Audio Virtual Cable output device
     fn find_virtual_cable() -> Option<String> {
         let host = cpal::default_host();
         if let Ok(devices) = host.output_devices() {
@@ -392,116 +320,6 @@ impl AudioPlayer {
 
     pub fn get_all_output_devices(&self) -> HashMap<String, String> {
         get_output_devices()
-    }
-
-    #[cfg(target_os = "linux")]
-    fn abort_link_thread(&mut self) {
-        if let Some(sender) = &self.input_link_sender {
-            if sender.send(Terminate {}).is_err() {
-                tracing::error!("Failed to send terminate signal to link thread");
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    async fn link_devices(&mut self) -> Result<()> {
-        self.abort_link_thread();
-
-        let current_input_name = match &self.current_input_device {
-            Some(device) => device.name.clone(),
-            None => {
-                tracing::info!("No input device selected, skipping device linking");
-                return Ok(());
-            }
-        };
-
-        // Retry up to 5 times with 100ms delay to handle PipeWire race conditions
-        const MAX_RETRIES: u32 = 5;
-        const RETRY_DELAY_MS: u64 = 100;
-
-        for attempt in 1..=MAX_RETRIES {
-            if attempt > 1 {
-                // Retrying because the expected device wasn't visible yet; force fresh enumeration.
-                invalidate_device_cache().await;
-            }
-            let (input_devices, _) = get_all_devices().await?;
-
-            // Find the virtual mic
-            let soundboard_daemon_input = match input_devices
-                .iter()
-                .find(|d| d.name == crate::VIRTUAL_MIC_NAME)
-                .cloned()
-            {
-                Some(device) => device,
-                None => {
-                    if attempt == MAX_RETRIES {
-                        tracing::info!("Could not find soundboard-virtual-mic after {} attempts, skipping device linking", MAX_RETRIES);
-                        return Ok(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                    continue;
-                }
-            };
-
-            // Re-fetch the current input device to get updated port info
-            let current_input_device = match input_devices
-                .iter()
-                .find(|d| d.name == current_input_name)
-                .cloned()
-            {
-                Some(device) => device,
-                None => {
-                    if attempt == MAX_RETRIES {
-                        tracing::info!("Could not find input device '{}' after {} attempts, skipping device linking", current_input_name, MAX_RETRIES);
-                        return Ok(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                    continue;
-                }
-            };
-
-            // Check if all required ports are available
-            match (
-                &current_input_device.output_fl,
-                &current_input_device.output_fr,
-                &soundboard_daemon_input.input_fl,
-                &soundboard_daemon_input.input_fr,
-            ) {
-                (Some(output_fl), Some(output_fr), Some(input_fl), Some(input_fr)) => {
-                    // All ports available, create the link
-                    self.input_link_sender = Some(create_link(
-                        output_fl.clone(),
-                        output_fr.clone(),
-                        input_fl.clone(),
-                        input_fr.clone(),
-                    )?);
-                    return Ok(());
-                }
-                (out_fl, out_fr, in_fl, in_fr) => {
-                    if attempt == MAX_RETRIES {
-                        tracing::info!(
-                            "Ports not available after {} attempts (output_fl: {}, output_fr: {}, input_fl: {}, input_fr: {}), skipping device linking",
-                            MAX_RETRIES,
-                            out_fl.is_some(),
-                            out_fr.is_some(),
-                            in_fl.is_some(),
-                            in_fr.is_some()
-                        );
-                        return Ok(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                    continue;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // On Windows, link_devices is a no-op (routing is via output device selection)
-    #[cfg(target_os = "windows")]
-    async fn link_devices(&mut self) -> Result<()> {
-        Ok(())
     }
 
     pub fn pause(&mut self) {
@@ -554,36 +372,7 @@ impl AudioPlayer {
         self.gain
     }
 
-    #[cfg(target_os = "linux")]
-    fn apply_mic_gain(&self) {
-        if let Some(device) = &self.current_input_device {
-            // Use wpctl to set the source volume
-            // Safety: device.id is u32 and mic_gain is f32 (clamped to MIN_MIC_GAIN-MAX_MIC_GAIN),
-            // so no shell injection is possible. Command::args() also bypasses shell.
-            let id_str = device.id.to_string();
-            let gain_str = format!("{:.2}", self.mic_gain);
-
-            match std::process::Command::new("wpctl")
-                .args(["set-volume", &id_str, &gain_str])
-                .output()
-            {
-                Ok(output) => {
-                    if !output.status.success() {
-                        tracing::error!(
-                            "wpctl set-volume failed: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to execute wpctl: {}", e);
-                }
-            }
-        }
-    }
-
-    // On Windows, apply mic gain by adjusting the mic passthrough sink volume
-    #[cfg(target_os = "windows")]
+    /// Apply mic gain by adjusting the mic passthrough sink volume.
     fn apply_mic_gain(&self) {
         self.mic_sink.set_volume(self.mic_gain);
     }
@@ -644,7 +433,6 @@ impl AudioPlayer {
                 self.sink.stop();
                 self.sink.append(source);
                 self.sink.play();
-                self.link_devices().await?;
 
                 Ok(())
             }
@@ -676,14 +464,9 @@ impl AudioPlayer {
                     self.duration = None;
                 }
 
-                // Stop current playback and abort virtual mic link
                 self.sink.stop();
-                #[cfg(target_os = "linux")]
-                self.abort_link_thread();
-
                 self.sink.append(source);
                 self.sink.play();
-                // Note: We do NOT call link_devices() here - audio goes to speakers only
 
                 Ok(())
             }
@@ -703,25 +486,6 @@ impl AudioPlayer {
         &self.current_file_path
     }
 
-    #[cfg(target_os = "linux")]
-    pub async fn set_current_input_device(&mut self, name: &str) -> Result<()> {
-        let input_device = get_device(name).await?;
-
-        if input_device.device_type != DeviceType::Input {
-            return Err(SoundboardError::AudioDevice(format!(
-                "selected device is not an input device: {}",
-                name
-            )));
-        }
-
-        self.current_input_device = Some(input_device);
-
-        self.link_devices().await?;
-
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
     pub async fn set_current_input_device(&mut self, name: &str) -> Result<()> {
         self.current_input_device = Some(name.to_string());
         self.start_mic_passthrough()?;
@@ -730,7 +494,6 @@ impl AudioPlayer {
     }
 
     /// Stop the current mic capture thread and clear the mic sink
-    #[cfg(target_os = "windows")]
     fn stop_mic_passthrough(&mut self) {
         if let Some(sender) = self.mic_stop_sender.take() {
             sender.send(()).ok();
@@ -739,7 +502,6 @@ impl AudioPlayer {
     }
 
     /// Start capturing from the selected mic and routing audio through the output mixer
-    #[cfg(target_os = "windows")]
     fn start_mic_passthrough(&mut self) -> Result<()> {
         self.stop_mic_passthrough();
 
@@ -748,7 +510,6 @@ impl AudioPlayer {
             None => return Ok(()),
         };
 
-        // Find the CPAL input device
         let host = cpal::default_host();
         let device = host
             .input_devices()
@@ -778,14 +539,12 @@ impl AudioPlayer {
 
         let (stop_tx, stop_rx) = std::sync::mpsc::channel();
 
-        // Spawn capture thread (cpal::Stream may not be Send on all platforms)
         std::thread::spawn(move || {
             let stream_result = match sample_format {
                 cpal::SampleFormat::F32 => device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         for &s in data {
-                            // RT-safe: no allocation, no lock. Drops on full ring.
                             let _ = producer.try_push(s);
                         }
                     },
@@ -814,7 +573,6 @@ impl AudioPlayer {
                         tracing::error!("Failed to start mic stream: {}", e);
                         return;
                     }
-                    // Keep stream alive until stop signal
                     let _ = stop_rx.recv();
                     drop(stream);
                 }
@@ -824,7 +582,6 @@ impl AudioPlayer {
             }
         });
 
-        // Connect MicSource to the mic sink on the output mixer
         let mic_source = MicSource {
             consumer,
             sample_rate: sample_rate_nz,
@@ -876,9 +633,6 @@ impl AudioPlayer {
                 layer.sink.stop();
                 layer.sink.append(source);
                 layer.sink.play();
-
-                // Ensure devices are linked for virtual mic output
-                self.link_devices().await?;
 
                 Ok(())
             }
@@ -1023,10 +777,6 @@ pub struct LayerInfo {
 mod tests {
     use super::*;
 
-    // --- Gain / volume clamping (TEST-06) ---
-    // The setters in AudioPlayer wrap these helpers, so testing the helpers
-    // covers the bounds without needing an audio device for AudioPlayer::new.
-
     #[test]
     fn clamp_volume_bounds() {
         assert_eq!(clamp_volume(-1.0), 0.0);
@@ -1072,8 +822,6 @@ mod tests {
         assert_eq!(clamp_layer_volume(1.5), 1.0);
     }
 
-    // --- LayerInfo / PlayerState data (TEST-07 partial) ---
-
     #[test]
     fn layer_info_default_is_inactive() {
         let info = LayerInfo::default();
@@ -1118,7 +866,6 @@ mod tests {
 
     #[test]
     fn num_audio_layers_const() {
-        // Pin contract that the layer count is what the IPC layer expects.
         assert_eq!(NUM_AUDIO_LAYERS, 4);
     }
 }
