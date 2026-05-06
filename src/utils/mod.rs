@@ -7,3 +7,4 @@ pub mod gui;
 pub mod logging;
 pub mod path;
 pub mod updater;
+pub mod vbcable_install;

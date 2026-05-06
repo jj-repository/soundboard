@@ -23,6 +23,8 @@ impl App for SoundpadGui {
         self.poll_hotkey_messages();
         // Poll for update check results
         self.poll_update_status();
+        // VB-Cable first-run detection + install progress channel
+        self.logic_vbcable_wizard();
 
         {
             let guard = self.audio_player_state_shared.lock_or_recover();
@@ -43,6 +45,11 @@ impl App for SoundpadGui {
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut EFrame) {
+        // VB-Cable wizard renders as a centred Window over whatever else is
+        // visible; no early return so the rest of the UI stays interactive
+        // when the wizard is hidden.
+        self.draw_vbcable_wizard(ui.ctx());
+
         if !is_daemon_running().unwrap_or(false) {
             self.draw_waiting_for_daemon(ui);
             return;

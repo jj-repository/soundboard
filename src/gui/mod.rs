@@ -3,6 +3,7 @@ mod hotkeys;
 mod input;
 pub mod tray; // pub: tray handle is stored in SoundpadGui and started externally
 mod update;
+mod vbcable_wizard;
 
 use crate::gui::hotkeys::{HotkeyAction, HotkeyManager};
 use crate::gui::tray::{TrayHandle, TrayMessage, start_tray};
@@ -55,6 +56,13 @@ struct SoundpadGui {
     /// 500ms-TTL caches for per-frame Vec<String> rebuilds (tags + playlist order)
     pub tags_cache: Option<(std::time::Instant, Vec<String>)>,
     pub ordered_playlists_cache: Option<(std::time::Instant, Vec<String>)>,
+    /// One-shot check on first frame whether VB-Cable is already installed.
+    pub vbcable_checked: bool,
+    pub vbcable_wizard_visible: bool,
+    /// `None` = wizard is at the prompt stage; `Some(_)` = install in flight.
+    pub vbcable_wizard_status: Option<soundboard::utils::vbcable_install::InstallStatus>,
+    pub vbcable_install_rx:
+        Option<mpsc::Receiver<soundboard::utils::vbcable_install::InstallStatus>>,
 }
 
 impl SoundpadGui {
@@ -102,6 +110,10 @@ impl SoundpadGui {
             file_existence_checked_at: None,
             tags_cache: None,
             ordered_playlists_cache: None,
+            vbcable_checked: false,
+            vbcable_wizard_visible: false,
+            vbcable_wizard_status: None,
+            vbcable_install_rx: None,
         }
     }
 

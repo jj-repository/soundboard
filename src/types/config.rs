@@ -221,6 +221,9 @@ pub struct GuiConfig {
     /// Whether to automatically check for updates on startup
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
+    /// User dismissed the VB-Cable install prompt; do not nag again on launch.
+    #[serde(default)]
+    pub vbcable_install_skipped: bool,
 }
 
 fn default_auto_check_updates() -> bool {
@@ -252,6 +255,7 @@ impl Default for GuiConfig {
             sidebar_width: default_sidebar_width(),
             playlist_order: Vec::new(),
             auto_check_updates: default_auto_check_updates(),
+            vbcable_install_skipped: false,
         }
     }
 }
