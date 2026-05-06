@@ -128,6 +128,23 @@ pub const MAX_MIC_GAIN: f32 = 3.0;
 /// Minimum mic gain multiplier (0.5x = -6dB, prevents complete silence)
 pub const MIN_MIC_GAIN: f32 = 0.5;
 
+/// Pure clamp helpers so gain/volume bounds can be unit-tested without
+/// constructing an `AudioPlayer` (which needs an audio device).
+/// `f32::clamp` propagates NaN, which would feed NaN samples to rodio; we
+/// substitute the lower bound so the failure mode is silence.
+pub fn clamp_volume(v: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+}
+pub fn clamp_gain(g: f32) -> f32 {
+    if g.is_nan() { MIN_GAIN } else { g.clamp(MIN_GAIN, MAX_GAIN) }
+}
+pub fn clamp_mic_gain(g: f32) -> f32 {
+    if g.is_nan() { MIN_MIC_GAIN } else { g.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN) }
+}
+pub fn clamp_layer_volume(v: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+}
+
 /// Lock-free SPSC ring buffer wiring for the Windows mic passthrough.
 /// The cpal input callback pushes samples; the rodio output thread pops
 /// them. Dropping the per-sample Mutex avoids priority inversion and the
@@ -524,12 +541,12 @@ impl AudioPlayer {
     }
 
     pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, 1.0);
+        self.volume = clamp_volume(volume);
         self.update_sink_volume();
     }
 
     pub fn set_gain(&mut self, gain: f32) {
-        self.gain = gain.clamp(MIN_GAIN, MAX_GAIN);
+        self.gain = clamp_gain(gain);
         self.update_sink_volume();
     }
 
@@ -572,7 +589,7 @@ impl AudioPlayer {
     }
 
     pub fn set_mic_gain(&mut self, mic_gain: f32) {
-        self.mic_gain = mic_gain.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
+        self.mic_gain = clamp_mic_gain(mic_gain);
         self.apply_mic_gain();
     }
 
@@ -935,7 +952,7 @@ impl AudioPlayer {
         }
 
         let layer = &mut self.layers[layer_index];
-        layer.volume = volume.clamp(0.0, 1.0);
+        layer.volume = clamp_layer_volume(volume);
         layer.sink.set_volume(layer.volume * self.gain);
         Ok(())
     }
@@ -1000,4 +1017,108 @@ pub struct LayerInfo {
     pub current_file: Option<PathBuf>,
     pub position: f32,
     pub duration: Option<f32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Gain / volume clamping (TEST-06) ---
+    // The setters in AudioPlayer wrap these helpers, so testing the helpers
+    // covers the bounds without needing an audio device for AudioPlayer::new.
+
+    #[test]
+    fn clamp_volume_bounds() {
+        assert_eq!(clamp_volume(-1.0), 0.0);
+        assert_eq!(clamp_volume(0.0), 0.0);
+        assert_eq!(clamp_volume(0.5), 0.5);
+        assert_eq!(clamp_volume(1.0), 1.0);
+        assert_eq!(clamp_volume(2.0), 1.0);
+        assert_eq!(clamp_volume(f32::INFINITY), 1.0);
+        assert_eq!(clamp_volume(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn clamp_volume_nan_pins_to_low_bound() {
+        // f32::clamp returns the lower bound when given NaN, which is the
+        // safe failure mode for an audio mixer (silence beats screech).
+        assert_eq!(clamp_volume(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn clamp_gain_bounds() {
+        assert_eq!(clamp_gain(MIN_GAIN - 1.0), MIN_GAIN);
+        assert_eq!(clamp_gain(MIN_GAIN), MIN_GAIN);
+        assert_eq!(clamp_gain(1.0), 1.0);
+        assert_eq!(clamp_gain(MAX_GAIN), MAX_GAIN);
+        assert_eq!(clamp_gain(MAX_GAIN + 5.0), MAX_GAIN);
+        assert_eq!(clamp_gain(f32::INFINITY), MAX_GAIN);
+    }
+
+    #[test]
+    fn clamp_mic_gain_bounds() {
+        assert_eq!(clamp_mic_gain(0.0), MIN_MIC_GAIN);
+        assert_eq!(clamp_mic_gain(MIN_MIC_GAIN - 0.1), MIN_MIC_GAIN);
+        assert_eq!(clamp_mic_gain(MIN_MIC_GAIN), MIN_MIC_GAIN);
+        assert_eq!(clamp_mic_gain(1.0), 1.0);
+        assert_eq!(clamp_mic_gain(MAX_MIC_GAIN), MAX_MIC_GAIN);
+        assert_eq!(clamp_mic_gain(10.0), MAX_MIC_GAIN);
+    }
+
+    #[test]
+    fn clamp_layer_volume_bounds() {
+        assert_eq!(clamp_layer_volume(-0.5), 0.0);
+        assert_eq!(clamp_layer_volume(0.7), 0.7);
+        assert_eq!(clamp_layer_volume(1.5), 1.0);
+    }
+
+    // --- LayerInfo / PlayerState data (TEST-07 partial) ---
+
+    #[test]
+    fn layer_info_default_is_inactive() {
+        let info = LayerInfo::default();
+        assert_eq!(info.index, 0);
+        assert!(!info.is_playing);
+        assert!(!info.is_paused);
+        assert!(!info.is_empty);
+        assert_eq!(info.volume, 0.0);
+        assert!(info.current_file.is_none());
+        assert_eq!(info.position, 0.0);
+        assert!(info.duration.is_none());
+    }
+
+    #[test]
+    fn layer_info_serde_roundtrip() {
+        let original = LayerInfo {
+            index: 2,
+            is_playing: true,
+            is_paused: false,
+            is_empty: false,
+            volume: 0.42,
+            current_file: Some(PathBuf::from("/sounds/a.mp3")),
+            position: 1.5,
+            duration: Some(3.0),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: LayerInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.index, original.index);
+        assert!(parsed.is_playing);
+        assert_eq!(parsed.volume, 0.42);
+        assert_eq!(parsed.current_file, original.current_file);
+    }
+
+    #[test]
+    fn player_state_serde_round_trip() {
+        for state in [PlayerState::Stopped, PlayerState::Paused, PlayerState::Playing] {
+            let s = serde_json::to_string(&state).unwrap();
+            let parsed: PlayerState = serde_json::from_str(&s).unwrap();
+            assert_eq!(state, parsed);
+        }
+    }
+
+    #[test]
+    fn num_audio_layers_const() {
+        // Pin contract that the layer count is what the IPC layer expects.
+        assert_eq!(NUM_AUDIO_LAYERS, 4);
+    }
 }

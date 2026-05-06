@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 /// Represents a configurable hotkey binding
@@ -148,7 +148,7 @@ impl SoundMetadata {
     }
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
     pub default_input_name: Option<String>,
     pub default_output_name: Option<String>,
@@ -159,31 +159,37 @@ pub struct DaemonConfig {
 
 impl DaemonConfig {
     pub fn save_to_file(&self) -> Result<()> {
-        let config_path = get_config_path()?.join("daemon.json");
+        self.save_to_path(&get_config_path()?.join("daemon.json"))
+    }
+
+    pub fn load_from_file() -> Result<DaemonConfig> {
+        Self::load_from_path(&get_config_path()?.join("daemon.json"))
+    }
+
+    /// FS-injected save: takes the destination path so unit tests can hit a
+    /// tempdir instead of the user's real config directory.
+    pub fn save_to_path(&self, config_path: &Path) -> Result<()> {
         let config_dir = config_path.parent().ok_or_else(|| {
             SoundboardError::Config(format!(
                 "failed to get parent for config path: {}",
                 config_path.display()
             ))
         })?;
-
         if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }
-
         let config_json = serde_json::to_string_pretty(self)?;
         fs::write(config_path, config_json.as_bytes())?;
         Ok(())
     }
 
-    pub fn load_from_file() -> Result<DaemonConfig> {
-        let config_path = get_config_path()?.join("daemon.json");
+    pub fn load_from_path(config_path: &Path) -> Result<DaemonConfig> {
         let bytes = fs::read(config_path)?;
         Ok(serde_json::from_slice::<DaemonConfig>(&bytes)?)
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {
     pub scale_factor: f32,
 
@@ -252,30 +258,34 @@ impl Default for GuiConfig {
 
 impl GuiConfig {
     pub fn save_to_file(&mut self) -> Result<()> {
-        let config_path = get_config_path()?.join("gui.json");
+        self.save_to_path(&get_config_path()?.join("gui.json"))
+    }
+
+    pub fn load_from_file() -> Result<GuiConfig> {
+        Self::load_from_path(&get_config_path()?.join("gui.json"))
+    }
+
+    /// FS-injected save: takes the destination path so unit tests can hit a
+    /// tempdir instead of the user's real config directory.
+    pub fn save_to_path(&mut self, config_path: &Path) -> Result<()> {
         let config_dir = config_path.parent().ok_or_else(|| {
             SoundboardError::Config(format!(
                 "failed to get parent for config path: {}",
                 config_path.display()
             ))
         })?;
-
         if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }
-
-        // Do not save scale factor if user does not want to
         if !self.save_scale_factor {
             self.scale_factor = 1.0;
         }
-
         let config_json = serde_json::to_string_pretty(self)?;
         fs::write(config_path, config_json.as_bytes())?;
         Ok(())
     }
 
-    pub fn load_from_file() -> Result<GuiConfig> {
-        let config_path = get_config_path()?.join("gui.json");
+    pub fn load_from_path(config_path: &Path) -> Result<GuiConfig> {
         let bytes = fs::read(config_path)?;
         Ok(serde_json::from_slice::<GuiConfig>(&bytes)?)
     }
@@ -548,5 +558,81 @@ mod tests {
         let loaded: HotkeyConfig = serde_json::from_str(&json).unwrap();
         assert!(loaded.play_pause.is_none());
         assert!(!loaded.enabled);
+    }
+
+    // --- Real-filesystem roundtrip (TEST-03) ---
+
+    #[test]
+    fn daemon_config_real_fs_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.json");
+        let original = DaemonConfig {
+            default_input_name: Some("HyperX".to_string()),
+            default_output_name: Some("VB-Cable".to_string()),
+            default_volume: Some(0.6),
+            default_gain: Some(1.2),
+            default_mic_gain: Some(1.5),
+        };
+        original.save_to_path(&path).unwrap();
+        let loaded = DaemonConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.default_input_name, original.default_input_name);
+        assert_eq!(loaded.default_volume, original.default_volume);
+        assert_eq!(loaded.default_gain, original.default_gain);
+    }
+
+    #[test]
+    fn daemon_config_save_creates_missing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/created/daemon.json");
+        DaemonConfig::default().save_to_path(&path).unwrap();
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn daemon_config_load_missing_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.json");
+        let err = DaemonConfig::load_from_path(&path).unwrap_err();
+        assert!(matches!(err, SoundboardError::Io(_)));
+    }
+
+    #[test]
+    fn gui_config_real_fs_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        let mut original = GuiConfig {
+            save_scale_factor: true,
+            scale_factor: 1.25,
+            sounds_folder: Some(PathBuf::from("/tmp/sounds")),
+            ..Default::default()
+        };
+        original.save_to_path(&path).unwrap();
+        let loaded = GuiConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.scale_factor, 1.25);
+        assert_eq!(loaded.sounds_folder, Some(PathBuf::from("/tmp/sounds")));
+    }
+
+    #[test]
+    fn gui_config_save_resets_scale_when_save_scale_factor_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        let mut config = GuiConfig {
+            save_scale_factor: false,
+            scale_factor: 2.0,
+            ..Default::default()
+        };
+        config.save_to_path(&path).unwrap();
+        assert_eq!(config.scale_factor, 1.0, "scale must be reset on save when save_scale_factor=false");
+        let loaded = GuiConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.scale_factor, 1.0);
+    }
+
+    #[test]
+    fn gui_config_load_corrupt_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        let err = GuiConfig::load_from_path(&path).unwrap_err();
+        assert!(matches!(err, SoundboardError::Json(_)));
     }
 }
