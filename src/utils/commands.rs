@@ -1,142 +1,78 @@
-use crate::types::{commands::*, socket::Request};
-use crate::utils::path::validate_audio_path;
+//! IPC parser. Translates a wire-level [`Request`] into a typed
+//! [`DaemonCommand`]. Returns `None` for an unknown command name OR for a
+//! known command whose required argument is missing/unparseable — the daemon
+//! responds with a generic error rather than constructing a "command with
+//! Option<f32> args" that has to validate again at execute time.
 
-pub fn parse_command(request: &Request) -> Option<Box<dyn Executable + Send>> {
-    match request.name.as_str() {
-        "ping" => Some(Box::new(PingCommand {})),
-        "pause" => Some(Box::new(PauseCommand {})),
-        "resume" => Some(Box::new(ResumeCommand {})),
-        "toggle_pause" => Some(Box::new(TogglePauseCommand {})),
-        "stop" => Some(Box::new(StopCommand {})),
-        "is_paused" => Some(Box::new(IsPausedCommand {})),
-        "get_state" => Some(Box::new(GetStateCommand {})),
-        "get_volume" => Some(Box::new(GetVolumeCommand {})),
-        "set_volume" => {
-            let volume = request
-                .args
-                .get("volume")
-                .unwrap_or(&String::new())
-                .parse::<f32>()
-                .ok();
-            Some(Box::new(SetVolumeCommand { volume }))
-        }
-        "get_gain" => Some(Box::new(GetGainCommand {})),
-        "set_gain" => {
-            let gain = request
-                .args
-                .get("gain")
-                .unwrap_or(&String::new())
-                .parse::<f32>()
-                .ok();
-            Some(Box::new(SetGainCommand { gain }))
-        }
-        "get_mic_gain" => Some(Box::new(GetMicGainCommand {})),
-        "set_mic_gain" => {
-            let mic_gain = request
-                .args
-                .get("mic_gain")
-                .unwrap_or(&String::new())
-                .parse::<f32>()
-                .ok();
-            Some(Box::new(SetMicGainCommand { mic_gain }))
-        }
-        "get_position" => Some(Box::new(GetPositionCommand {})),
-        "seek" => {
-            let position = request
-                .args
-                .get("position")
-                .unwrap_or(&String::new())
-                .parse::<f32>()
-                .ok();
-            Some(Box::new(SeekCommand { position }))
-        }
-        "get_duration" => Some(Box::new(GetDurationCommand {})),
-        "play" => {
-            let file_path = request
-                .args
-                .get("file_path")
-                .and_then(|s| validate_audio_path(s));
-            Some(Box::new(PlayCommand { file_path }))
-        }
-        "preview" => {
-            let file_path = request
-                .args
-                .get("file_path")
-                .and_then(|s| validate_audio_path(s));
-            Some(Box::new(PreviewCommand { file_path }))
-        }
-        "get_current_file_path" => Some(Box::new(GetCurrentFilePathCommand {})),
-        "get_input" => Some(Box::new(GetCurrentInputCommand {})),
-        "get_inputs" => Some(Box::new(GetAllInputsCommand {})),
-        "set_input" => {
-            let name = request.args.get("input_name").cloned();
-            Some(Box::new(SetCurrentInputCommand { name }))
-        }
-        "get_output" => Some(Box::new(GetCurrentOutputCommand {})),
-        "get_outputs" => Some(Box::new(GetAllOutputsCommand {})),
-        "set_output" => {
-            let name = request.args.get("output_name").cloned();
-            Some(Box::new(SetCurrentOutputCommand { name }))
-        }
-        "get_loop" => Some(Box::new(GetLoopCommand {})),
-        "set_loop" => {
-            let enabled = request
-                .args
-                .get("enabled")
-                .unwrap_or(&String::new())
-                .parse::<bool>()
-                .ok();
-            Some(Box::new(SetLoopCommand { enabled }))
-        }
-        "toggle_loop" => Some(Box::new(ToggleLoopCommand {})),
-        // Layer commands
-        "play_on_layer" => {
-            let layer_index = request
-                .args
-                .get("layer_index")
-                .unwrap_or(&String::new())
-                .parse::<usize>()
-                .ok();
-            let file_path = request
-                .args
-                .get("file_path")
-                .and_then(|s| validate_audio_path(s));
-            Some(Box::new(PlayOnLayerCommand {
-                layer_index,
-                file_path,
-            }))
-        }
-        "stop_layer" => {
-            let layer_index = request
-                .args
-                .get("layer_index")
-                .unwrap_or(&String::new())
-                .parse::<usize>()
-                .ok();
-            Some(Box::new(StopLayerCommand { layer_index }))
-        }
-        "stop_all_layers" => Some(Box::new(StopAllLayersCommand {})),
-        "set_layer_volume" => {
-            let layer_index = request
-                .args
-                .get("layer_index")
-                .unwrap_or(&String::new())
-                .parse::<usize>()
-                .ok();
-            let volume = request
-                .args
-                .get("volume")
-                .unwrap_or(&String::new())
-                .parse::<f32>()
-                .ok();
-            Some(Box::new(SetLayerVolumeCommand {
-                layer_index,
-                volume,
-            }))
-        }
-        "get_layers_info" => Some(Box::new(GetLayersInfoCommand {})),
-        _ => None,
-    }
+use crate::types::{commands::DaemonCommand, socket::Request};
+use crate::utils::path::validate_audio_path;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::str::FromStr;
+
+fn arg<'a>(args: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
+    args.get(key).map(String::as_str)
+}
+
+fn arg_parse<T: FromStr>(args: &HashMap<String, String>, key: &str) -> Option<T> {
+    arg(args, key)?.parse::<T>().ok()
+}
+
+fn arg_audio_path(args: &HashMap<String, String>) -> Option<PathBuf> {
+    validate_audio_path(arg(args, "file_path")?)
+}
+
+pub fn parse_command(request: &Request) -> Option<DaemonCommand> {
+    use DaemonCommand::*;
+
+    let a = &request.args;
+    Some(match request.name.as_str() {
+        "ping" => Ping,
+        "pause" => Pause,
+        "resume" => Resume,
+        "toggle_pause" => TogglePause,
+        "stop" => Stop,
+
+        "is_paused" => IsPaused,
+        "get_state" => GetState,
+        "get_volume" => GetVolume,
+        "set_volume" => SetVolume(arg_parse(a, "volume")?),
+        "get_gain" => GetGain,
+        "set_gain" => SetGain(arg_parse(a, "gain")?),
+        "get_mic_gain" => GetMicGain,
+        "set_mic_gain" => SetMicGain(arg_parse(a, "mic_gain")?),
+        "get_position" => GetPosition,
+        "seek" => Seek(arg_parse(a, "position")?),
+        "get_duration" => GetDuration,
+        "play" => Play(arg_audio_path(a)?),
+        "preview" => Preview(arg_audio_path(a)?),
+
+        "get_current_file_path" => GetCurrentFilePath,
+        "get_input" => GetCurrentInput,
+        "get_inputs" => GetAllInputs,
+        "set_input" => SetCurrentInput(arg(a, "input_name")?.to_string()),
+        "get_output" => GetCurrentOutput,
+        "get_outputs" => GetAllOutputs,
+        "set_output" => SetCurrentOutput(arg(a, "output_name")?.to_string()),
+
+        "get_loop" => GetLoop,
+        "set_loop" => SetLoop(arg_parse(a, "enabled")?),
+        "toggle_loop" => ToggleLoop,
+
+        "play_on_layer" => PlayOnLayer {
+            index: arg_parse(a, "layer_index")?,
+            file_path: arg_audio_path(a)?,
+        },
+        "stop_layer" => StopLayer(arg_parse(a, "layer_index")?),
+        "stop_all_layers" => StopAllLayers,
+        "set_layer_volume" => SetLayerVolume {
+            index: arg_parse(a, "layer_index")?,
+            volume: arg_parse(a, "volume")?,
+        },
+        "get_layers_info" => GetLayersInfo,
+
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -145,6 +81,20 @@ mod tests {
     use crate::utils::path::SUPPORTED_AUDIO_EXTENSIONS;
     use std::fs::{self, File};
     use tempfile::TempDir;
+
+    fn req(name: &str) -> Request {
+        Request { name: name.to_string(), args: HashMap::new() }
+    }
+
+    fn req_with(name: &str, args: &[(&str, &str)]) -> Request {
+        let mut map = HashMap::new();
+        for (k, v) in args {
+            map.insert((*k).to_string(), (*v).to_string());
+        }
+        Request { name: name.to_string(), args: map }
+    }
+
+    // --- validate_audio_path tests preserved from the prior commands.rs ---
 
     #[test]
     fn test_validate_audio_path_empty_string() {
@@ -165,564 +115,64 @@ mod tests {
     #[test]
     fn test_validate_audio_path_valid_extensions() {
         let temp_dir = TempDir::new().unwrap();
-
         for ext in SUPPORTED_AUDIO_EXTENSIONS {
             let file_path = temp_dir.path().join(format!("test.{}", ext));
             File::create(&file_path).unwrap();
-
-            let result = validate_audio_path(file_path.to_str().unwrap());
-            assert!(result.is_some(), "Extension {} should be valid", ext);
+            assert!(
+                validate_audio_path(file_path.to_str().unwrap()).is_some(),
+                "Extension {} should be valid", ext
+            );
         }
     }
 
     #[test]
     fn test_validate_audio_path_invalid_extension() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Create files with invalid extensions
-        let invalid_exts = ["txt", "exe", "sh", "py", "jpg", "png"];
-        for ext in invalid_exts {
+        for ext in ["txt", "exe", "sh", "py", "jpg", "png"] {
             let file_path = temp_dir.path().join(format!("test.{}", ext));
             File::create(&file_path).unwrap();
-
-            let result = validate_audio_path(file_path.to_str().unwrap());
-            assert!(result.is_none(), "Extension {} should be rejected", ext);
+            assert!(
+                validate_audio_path(file_path.to_str().unwrap()).is_none(),
+                "Extension {} should be rejected", ext
+            );
         }
     }
 
     #[test]
     fn test_validate_audio_path_directory_rejected() {
         let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path().join("subdir.mp3"); // Directory with audio-like name
+        let dir_path = temp_dir.path().join("subdir.mp3");
         fs::create_dir(&dir_path).unwrap();
-
-        let result = validate_audio_path(dir_path.to_str().unwrap());
-        assert!(
-            result.is_none(),
-            "Directories should be rejected even with audio extension"
-        );
+        assert!(validate_audio_path(dir_path.to_str().unwrap()).is_none());
     }
 
     #[test]
     fn test_validate_audio_path_case_insensitive_extension() {
         let temp_dir = TempDir::new().unwrap();
-
-        let mixed_case_exts = ["MP3", "WaV", "OGG", "FLAC"];
-        for ext in mixed_case_exts {
+        for ext in ["MP3", "WaV", "OGG", "FLAC"] {
             let file_path = temp_dir.path().join(format!("test.{}", ext));
             File::create(&file_path).unwrap();
-
-            let result = validate_audio_path(file_path.to_str().unwrap());
-            assert!(
-                result.is_some(),
-                "Extension {} should be valid (case insensitive)",
-                ext
-            );
+            assert!(validate_audio_path(file_path.to_str().unwrap()).is_some());
         }
     }
 
     #[test]
     fn test_validate_audio_path_returns_canonical() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.mp3");
-        File::create(&file_path).unwrap();
-
-        // Use a path with redundant components
-        let redundant_path = temp_dir.path().join("./test.mp3");
-        let result = validate_audio_path(redundant_path.to_str().unwrap());
-
+        File::create(temp_dir.path().join("test.mp3")).unwrap();
+        let redundant = temp_dir.path().join("./test.mp3");
+        let result = validate_audio_path(redundant.to_str().unwrap());
         assert!(result.is_some());
-        // The result should be canonicalized (absolute path)
         assert!(result.unwrap().is_absolute());
     }
 
     #[test]
     fn test_validate_audio_path_no_extension() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("noextension");
-        File::create(&file_path).unwrap();
-
-        let result = validate_audio_path(file_path.to_str().unwrap());
-        assert!(
-            result.is_none(),
-            "Files without extension should be rejected"
-        );
+        let path = temp_dir.path().join("noextension");
+        File::create(&path).unwrap();
+        assert!(validate_audio_path(path.to_str().unwrap()).is_none());
     }
-
-    // Tests for parse_command function
-    use crate::types::socket::Request;
-    use std::collections::HashMap;
-
-    #[test]
-    fn test_parse_command_ping() {
-        let request = Request {
-            name: "ping".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "ping command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_pause() {
-        let request = Request {
-            name: "pause".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "pause command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_resume() {
-        let request = Request {
-            name: "resume".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "resume command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_toggle_pause() {
-        let request = Request {
-            name: "toggle_pause".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "toggle_pause command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_stop() {
-        let request = Request {
-            name: "stop".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "stop command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_is_paused() {
-        let request = Request {
-            name: "is_paused".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "is_paused command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_state() {
-        let request = Request {
-            name: "get_state".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_state command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_volume() {
-        let request = Request {
-            name: "get_volume".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_volume command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_volume_with_valid_args() {
-        let mut args = HashMap::new();
-        args.insert("volume".to_string(), "0.5".to_string());
-        let request = Request {
-            name: "set_volume".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_volume command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_volume_without_args() {
-        let request = Request {
-            name: "set_volume".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(
-            result.is_some(),
-            "set_volume command should be parsed even without args"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_get_gain() {
-        let request = Request {
-            name: "get_gain".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_gain command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_gain() {
-        let mut args = HashMap::new();
-        args.insert("gain".to_string(), "1.5".to_string());
-        let request = Request {
-            name: "set_gain".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_gain command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_mic_gain() {
-        let request = Request {
-            name: "get_mic_gain".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_mic_gain command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_mic_gain() {
-        let mut args = HashMap::new();
-        args.insert("mic_gain".to_string(), "2.0".to_string());
-        let request = Request {
-            name: "set_mic_gain".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_mic_gain command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_position() {
-        let request = Request {
-            name: "get_position".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_position command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_seek() {
-        let mut args = HashMap::new();
-        args.insert("position".to_string(), "30.5".to_string());
-        let request = Request {
-            name: "seek".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "seek command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_duration() {
-        let request = Request {
-            name: "get_duration".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_duration command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_current_file_path() {
-        let request = Request {
-            name: "get_current_file_path".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(
-            result.is_some(),
-            "get_current_file_path command should be parsed"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_get_input() {
-        let request = Request {
-            name: "get_input".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_input command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_inputs() {
-        let request = Request {
-            name: "get_inputs".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_inputs command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_input() {
-        let mut args = HashMap::new();
-        args.insert("input_name".to_string(), "mic1".to_string());
-        let request = Request {
-            name: "set_input".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_input command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_output() {
-        let request = Request {
-            name: "get_output".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_output command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_outputs() {
-        let request = Request {
-            name: "get_outputs".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_outputs command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_output() {
-        let mut args = HashMap::new();
-        args.insert("output_name".to_string(), "speaker1".to_string());
-        let request = Request {
-            name: "set_output".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_output command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_get_loop() {
-        let request = Request {
-            name: "get_loop".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_loop command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_loop() {
-        let mut args = HashMap::new();
-        args.insert("enabled".to_string(), "true".to_string());
-        let request = Request {
-            name: "set_loop".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "set_loop command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_toggle_loop() {
-        let request = Request {
-            name: "toggle_loop".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "toggle_loop command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_stop_layer() {
-        let mut args = HashMap::new();
-        args.insert("layer_index".to_string(), "0".to_string());
-        let request = Request {
-            name: "stop_layer".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "stop_layer command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_stop_all_layers() {
-        let request = Request {
-            name: "stop_all_layers".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "stop_all_layers command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_set_layer_volume() {
-        let mut args = HashMap::new();
-        args.insert("layer_index".to_string(), "1".to_string());
-        args.insert("volume".to_string(), "0.8".to_string());
-        let request = Request {
-            name: "set_layer_volume".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(
-            result.is_some(),
-            "set_layer_volume command should be parsed"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_get_layers_info() {
-        let request = Request {
-            name: "get_layers_info".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_some(), "get_layers_info command should be parsed");
-    }
-
-    #[test]
-    fn test_parse_command_unknown_returns_none() {
-        let request = Request {
-            name: "unknown_command".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_none(), "unknown command should return None");
-    }
-
-    #[test]
-    fn test_parse_command_empty_name_returns_none() {
-        let request = Request {
-            name: "".to_string(),
-            args: HashMap::new(),
-        };
-        let result = parse_command(&request);
-        assert!(result.is_none(), "empty command name should return None");
-    }
-
-    #[test]
-    fn test_parse_command_invalid_volume_string() {
-        let mut args = HashMap::new();
-        args.insert("volume".to_string(), "not_a_number".to_string());
-        let request = Request {
-            name: "set_volume".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        // Command is still parsed, but volume will be None internally
-        assert!(
-            result.is_some(),
-            "set_volume with invalid number should still parse"
-        );
-    }
-
-    // --- Edge case tests for command parsing (TEST-05) ---
-
-    #[test]
-    fn test_parse_command_set_volume_negative() {
-        let mut args = HashMap::new();
-        args.insert("volume".to_string(), "-0.5".to_string());
-        let request = Request {
-            name: "set_volume".to_string(),
-            args,
-        };
-        let result = parse_command(&request);
-        assert!(
-            result.is_some(),
-            "negative volume should still parse (clamping happens at execution)"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_set_gain_exceeds_max() {
-        let mut args = HashMap::new();
-        args.insert("gain".to_string(), "999.0".to_string());
-        let request = Request {
-            name: "set_gain".to_string(),
-            args,
-        };
-        assert!(parse_command(&request).is_some());
-    }
-
-    #[test]
-    fn test_parse_command_seek_negative_position() {
-        let mut args = HashMap::new();
-        args.insert("position".to_string(), "-10.0".to_string());
-        let request = Request {
-            name: "seek".to_string(),
-            args,
-        };
-        assert!(parse_command(&request).is_some());
-    }
-
-    #[test]
-    fn test_parse_command_set_layer_volume_missing_index() {
-        let mut args = HashMap::new();
-        args.insert("volume".to_string(), "0.5".to_string());
-        // No layer_index provided
-        let request = Request {
-            name: "set_layer_volume".to_string(),
-            args,
-        };
-        assert!(
-            parse_command(&request).is_some(),
-            "missing layer_index should still parse"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_set_layer_volume_non_numeric_index() {
-        let mut args = HashMap::new();
-        args.insert("layer_index".to_string(), "abc".to_string());
-        args.insert("volume".to_string(), "0.5".to_string());
-        let request = Request {
-            name: "set_layer_volume".to_string(),
-            args,
-        };
-        assert!(
-            parse_command(&request).is_some(),
-            "non-numeric layer_index should parse with None"
-        );
-    }
-
-    #[test]
-    fn test_parse_command_play_on_layer_missing_file() {
-        let mut args = HashMap::new();
-        args.insert("layer_index".to_string(), "0".to_string());
-        // No file_path
-        let request = Request {
-            name: "play_on_layer".to_string(),
-            args,
-        };
-        assert!(parse_command(&request).is_some());
-    }
-
-    #[test]
-    fn test_parse_command_set_loop_invalid_bool() {
-        let mut args = HashMap::new();
-        args.insert("enabled".to_string(), "maybe".to_string());
-        let request = Request {
-            name: "set_loop".to_string(),
-            args,
-        };
-        assert!(
-            parse_command(&request).is_some(),
-            "invalid bool should parse with None"
-        );
-    }
-
-    // --- Security tests for audio path validation (TEST-01) ---
 
     #[test]
     fn test_validate_audio_path_traversal_rejected() {
@@ -733,19 +183,17 @@ mod tests {
     #[test]
     fn test_validate_audio_path_double_extension_non_audio() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("file.exe.mp3");
-        File::create(&file_path).unwrap();
-        // Should pass since the final extension is .mp3 and it's a real file
-        assert!(validate_audio_path(file_path.to_str().unwrap()).is_some());
+        let file = temp_dir.path().join("file.exe.mp3");
+        File::create(&file).unwrap();
+        assert!(validate_audio_path(file.to_str().unwrap()).is_some());
     }
 
     #[test]
     fn test_validate_audio_path_hidden_file_rejected() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join(".hidden.mp3");
-        File::create(&file_path).unwrap();
-        // Hidden files with valid extensions should still pass (they're real audio files)
-        assert!(validate_audio_path(file_path.to_str().unwrap()).is_some());
+        let file = temp_dir.path().join(".hidden.mp3");
+        File::create(&file).unwrap();
+        assert!(validate_audio_path(file.to_str().unwrap()).is_some());
     }
 
     #[cfg(target_os = "linux")]
@@ -756,12 +204,118 @@ mod tests {
         File::create(&target).unwrap();
         let link = temp_dir.path().join("trick.mp3");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        // After canonicalization, extension is .txt -> rejected
         assert!(validate_audio_path(link.to_str().unwrap()).is_none());
     }
 
     #[test]
     fn test_validate_audio_path_whitespace_only() {
         assert!(validate_audio_path("   ").is_none());
+    }
+
+    // --- parse_command argless commands ---
+
+    #[test]
+    fn parse_argless_commands() {
+        for name in [
+            "ping", "pause", "resume", "toggle_pause", "stop", "is_paused",
+            "get_state", "get_volume", "get_gain", "get_mic_gain", "get_position",
+            "get_duration", "get_current_file_path", "get_input", "get_inputs",
+            "get_output", "get_outputs", "get_loop", "toggle_loop",
+            "stop_all_layers", "get_layers_info",
+        ] {
+            assert!(parse_command(&req(name)).is_some(), "{name} should parse");
+        }
+    }
+
+    #[test]
+    fn parse_unknown_command_is_none() {
+        assert!(parse_command(&req("not_a_real_command")).is_none());
+        assert!(parse_command(&req("")).is_none());
+    }
+
+    // --- Strict-arg parsing: invalid args now reject at parse time ---
+
+    #[test]
+    fn parse_set_volume_strict() {
+        assert!(matches!(
+            parse_command(&req_with("set_volume", &[("volume", "0.5")])),
+            Some(DaemonCommand::SetVolume(v)) if v == 0.5
+        ));
+        assert!(parse_command(&req("set_volume")).is_none(), "missing arg rejected");
+        assert!(
+            parse_command(&req_with("set_volume", &[("volume", "abc")])).is_none(),
+            "non-numeric arg rejected"
+        );
+    }
+
+    #[test]
+    fn parse_set_loop_strict() {
+        assert!(matches!(
+            parse_command(&req_with("set_loop", &[("enabled", "true")])),
+            Some(DaemonCommand::SetLoop(true))
+        ));
+        assert!(
+            parse_command(&req_with("set_loop", &[("enabled", "maybe")])).is_none()
+        );
+    }
+
+    #[test]
+    fn parse_seek_strict() {
+        assert!(matches!(
+            parse_command(&req_with("seek", &[("position", "30.5")])),
+            Some(DaemonCommand::Seek(p)) if p == 30.5
+        ));
+        // Negative still parses; clamping happens at exec time via player.
+        assert!(matches!(
+            parse_command(&req_with("seek", &[("position", "-10.0")])),
+            Some(DaemonCommand::Seek(_))
+        ));
+    }
+
+    #[test]
+    fn parse_set_layer_volume_strict() {
+        let ok = req_with("set_layer_volume", &[("layer_index", "1"), ("volume", "0.8")]);
+        assert!(matches!(
+            parse_command(&ok),
+            Some(DaemonCommand::SetLayerVolume { index: 1, volume: 0.8 })
+        ));
+        let missing = req_with("set_layer_volume", &[("volume", "0.5")]);
+        assert!(parse_command(&missing).is_none());
+        let bad_idx = req_with("set_layer_volume", &[("layer_index", "abc"), ("volume", "0.5")]);
+        assert!(parse_command(&bad_idx).is_none());
+    }
+
+    #[test]
+    fn parse_set_input_strict() {
+        assert!(matches!(
+            parse_command(&req_with("set_input", &[("input_name", "mic1")])),
+            Some(DaemonCommand::SetCurrentInput(s)) if s == "mic1"
+        ));
+        assert!(parse_command(&req("set_input")).is_none());
+    }
+
+    #[test]
+    fn parse_set_output_strict() {
+        assert!(matches!(
+            parse_command(&req_with("set_output", &[("output_name", "spk1")])),
+            Some(DaemonCommand::SetCurrentOutput(s)) if s == "spk1"
+        ));
+        assert!(parse_command(&req("set_output")).is_none());
+    }
+
+    #[test]
+    fn parse_play_requires_valid_audio_path() {
+        // Valid audio file
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("song.mp3");
+        File::create(&file).unwrap();
+        let ok = req_with("play", &[("file_path", file.to_str().unwrap())]);
+        assert!(matches!(parse_command(&ok), Some(DaemonCommand::Play(_))));
+
+        // Missing path
+        assert!(parse_command(&req("play")).is_none());
+        // Non-audio extension
+        let bad = req_with("play", &[("file_path", "/etc/passwd")]);
+        assert!(parse_command(&bad).is_none());
     }
 }

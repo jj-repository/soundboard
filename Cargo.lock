@@ -4279,7 +4279,6 @@ dependencies = [
 name = "soundboard"
 version = "1.10.0"
 dependencies = [
- "async-trait",
  "clap",
  "dirs",
  "eframe",

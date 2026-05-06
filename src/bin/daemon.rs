@@ -183,7 +183,7 @@ async fn handle_connection(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     let command = parse_command(&request);
     let response: Response = match command {
         Some(cmd) => cmd.execute().await,
-        None => Response::new(false, "Unknown command"),
+        None => Response::new(false, "Unknown or malformed command"),
     };
 
     let response_data = match serde_json::to_vec(&response) {
