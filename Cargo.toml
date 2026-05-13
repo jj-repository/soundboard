@@ -52,6 +52,9 @@ hound = "3"
 # callback against the playback thread at 48 kHz.
 ringbuf = "0.4"
 
+[build-dependencies]
+embed-resource = "3"
+
 [dev-dependencies]
 tempfile = "3"
 
