@@ -226,7 +226,11 @@ impl SoundpadGui {
             .filter(|p| {
                 p.extension()
                     .and_then(|e| e.to_str())
-                    .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+                    .map(|e| {
+                        SUPPORTED_EXTENSIONS
+                            .iter()
+                            .any(|&ext| ext.eq_ignore_ascii_case(e))
+                    })
                     .unwrap_or(false)
             })
             .collect();
