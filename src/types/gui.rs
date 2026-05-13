@@ -48,6 +48,14 @@ pub struct AppState {
     pub gain_dragged: bool,
     pub mic_gain_dragged: bool,
 
+    /// Countdown frames after a slider drag ends before we sync the slider value
+    /// back from the daemon. Prevents snap-back while the daemon processes our
+    /// request. Decremented once per frame; sync only when all are 0.
+    pub position_drag_cooldown: u8,
+    pub volume_drag_cooldown: u8,
+    pub gain_drag_cooldown: u8,
+    pub mic_gain_drag_cooldown: u8,
+
     pub show_settings: bool,
 
     pub current_dir: Option<PathBuf>,
