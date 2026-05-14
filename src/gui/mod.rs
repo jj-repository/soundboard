@@ -520,7 +520,7 @@ impl SoundpadGui {
                     if path.is_file() {
                         // Check if it's a supported audio file
                         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            if SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                            if SUPPORTED_EXTENSIONS.iter().any(|&e| e.eq_ignore_ascii_case(ext)) {
                                 self.app_state.files.insert(path);
                             }
                         }

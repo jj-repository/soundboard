@@ -1,0 +1,4 @@
+// Windows resource script for soundboard
+// Embeds the application manifest (RT_MANIFEST = 24, resource ID 1)
+#include <winuser.h>
+1 RT_MANIFEST "soundboard.manifest"

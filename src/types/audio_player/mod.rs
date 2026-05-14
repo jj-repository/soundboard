@@ -1,6 +1,23 @@
+mod device;
+mod gain;
+mod layer;
+mod mic;
+
+pub use device::{get_default_output_device, get_input_devices, get_output_devices};
+pub use gain::{
+    clamp_gain, clamp_layer_volume, clamp_mic_gain, clamp_volume, MAX_GAIN, MAX_MIC_GAIN,
+    MIN_GAIN, MIN_MIC_GAIN,
+};
+pub use layer::{AudioLayer, LayerInfo, NUM_AUDIO_LAYERS};
+
 use crate::error::{Result, SoundboardError};
 use crate::utils::daemon::get_daemon_config;
 use crate::utils::path::has_supported_audio_extension;
+use mic::MicSource;
+use ringbuf::{
+    traits::{Producer as ProducerTrait, Split},
+    HeapRb,
+};
 use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use rodio::{cpal, Decoder, Player, Source};
@@ -20,78 +37,6 @@ pub enum PlayerState {
     Playing,
 }
 
-/// Get all available output devices
-pub fn get_output_devices() -> HashMap<String, String> {
-    let mut devices = HashMap::new();
-    let host = cpal::default_host();
-
-    if let Ok(output_devices) = host.output_devices() {
-        for device in output_devices {
-            if let Ok(desc) = device.description() {
-                let name = desc.name().to_string();
-                devices.insert(name.clone(), name);
-            }
-        }
-    }
-
-    devices
-}
-
-/// Get the default output device name
-pub fn get_default_output_device() -> Option<String> {
-    let host = cpal::default_host();
-    host.default_output_device()
-        .and_then(|d| d.description().ok())
-        .map(|desc| desc.name().to_string())
-}
-
-/// Get all available input devices (for mic selection)
-pub fn get_input_devices() -> HashMap<String, String> {
-    let mut devices = HashMap::new();
-    let host = cpal::default_host();
-    if let Ok(input_devices) = host.input_devices() {
-        for device in input_devices {
-            if let Ok(desc) = device.description() {
-                let name = desc.name().to_string();
-                devices.insert(name.clone(), name);
-            }
-        }
-    }
-    devices
-}
-
-/// Represents a single audio layer that can play sounds independently
-pub struct AudioLayer {
-    pub sink: Player,
-    pub volume: f32,
-    pub current_file_path: Option<PathBuf>,
-    pub duration: Option<f32>,
-}
-
-impl AudioLayer {
-    pub fn new(mixer: &rodio::mixer::Mixer) -> Self {
-        let sink = Player::connect_new(mixer);
-        sink.set_volume(1.0);
-        Self {
-            sink,
-            volume: 1.0,
-            current_file_path: None,
-            duration: None,
-        }
-    }
-
-    pub fn is_playing(&self) -> bool {
-        !self.sink.empty() && !self.sink.is_paused()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.sink.empty()
-    }
-}
-
-/// Number of audio layers available for mixing
-pub const NUM_AUDIO_LAYERS: usize = 4;
-
 /// Defense-in-depth validation for paths handed to the player. The IPC parser
 /// already runs `validate_audio_path`, but the player API can be reached from
 /// anywhere in the binary (looped playback, future GUI direct hooks), so
@@ -106,90 +51,6 @@ fn validate_audio_file(file_path: &Path) -> Result<()> {
         return Err(SoundboardError::PathNotAllowed(file_path.to_path_buf()));
     }
     Ok(())
-}
-
-/// Maximum gain multiplier for main audio output (5x = +14dB)
-pub const MAX_GAIN: f32 = 5.0;
-/// Minimum gain multiplier for main audio output
-pub const MIN_GAIN: f32 = 0.0;
-
-/// Maximum mic gain multiplier (3x = +9.5dB)
-pub const MAX_MIC_GAIN: f32 = 3.0;
-/// Minimum mic gain multiplier (0.5x = -6dB, prevents complete silence)
-pub const MIN_MIC_GAIN: f32 = 0.5;
-
-/// Pure clamp helpers so gain/volume bounds can be unit-tested without
-/// constructing an `AudioPlayer` (which needs an audio device).
-/// `f32::clamp` propagates NaN, which would feed NaN samples to rodio; we
-/// substitute the lower bound so the failure mode is silence.
-pub fn clamp_volume(v: f32) -> f32 {
-    if v.is_nan() {
-        0.0
-    } else {
-        v.clamp(0.0, 1.0)
-    }
-}
-pub fn clamp_gain(g: f32) -> f32 {
-    if g.is_nan() {
-        MIN_GAIN
-    } else {
-        g.clamp(MIN_GAIN, MAX_GAIN)
-    }
-}
-pub fn clamp_mic_gain(g: f32) -> f32 {
-    if g.is_nan() {
-        MIN_MIC_GAIN
-    } else {
-        g.clamp(MIN_MIC_GAIN, MAX_MIC_GAIN)
-    }
-}
-pub fn clamp_layer_volume(v: f32) -> f32 {
-    if v.is_nan() {
-        0.0
-    } else {
-        v.clamp(0.0, 1.0)
-    }
-}
-
-/// Lock-free SPSC ring buffer wiring for the mic passthrough.
-/// The cpal input callback pushes samples; the rodio output thread pops
-/// them. Dropping the per-sample Mutex avoids priority inversion and the
-/// per-sample lock acquisition at 48 kHz.
-use ringbuf::{
-    traits::{Consumer as ConsumerTrait, Producer as ProducerTrait, Split},
-    HeapRb,
-};
-
-type MicConsumer = <HeapRb<f32> as Split>::Cons;
-
-/// Custom rodio Source that reads captured mic audio from a lock-free ring.
-struct MicSource {
-    consumer: MicConsumer,
-    sample_rate: std::num::NonZero<u32>,
-    channels: std::num::NonZero<u16>,
-}
-
-impl Iterator for MicSource {
-    type Item = f32;
-    fn next(&mut self) -> Option<f32> {
-        // Return silence on underflow rather than stopping the source.
-        Some(self.consumer.try_pop().unwrap_or(0.0))
-    }
-}
-
-impl Source for MicSource {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-    fn channels(&self) -> std::num::NonZero<u16> {
-        self.channels
-    }
-    fn sample_rate(&self) -> std::num::NonZero<u32> {
-        self.sample_rate
-    }
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
 }
 
 pub struct AudioPlayer {
@@ -325,7 +186,6 @@ impl AudioPlayer {
         Err(SoundboardError::DeviceNotFound(device_name.to_string()))
     }
 
-    /// Try to find VB-Audio Virtual Cable output device
     fn find_virtual_cable() -> Option<String> {
         let host = cpal::default_host();
         if let Ok(devices) = host.output_devices() {
@@ -375,11 +235,9 @@ impl AudioPlayer {
         if self.sink.len() == 0 {
             return PlayerState::Stopped;
         }
-
         if self.sink.is_paused() {
             return PlayerState::Paused;
         }
-
         PlayerState::Playing
     }
 
@@ -413,7 +271,6 @@ impl AudioPlayer {
         self.gain
     }
 
-    /// Apply mic gain by adjusting the mic passthrough sink volume.
     fn apply_mic_gain(&self) {
         self.mic_sink.set_volume(self.mic_gain);
     }
@@ -431,7 +288,6 @@ impl AudioPlayer {
         if self.get_state() == PlayerState::Stopped {
             return 0.0;
         }
-
         self.sink.get_pos().as_secs_f32()
     }
 
@@ -439,7 +295,6 @@ impl AudioPlayer {
         if position < 0.0 {
             position = 0.0;
         }
-
         self.sink
             .try_seek(Duration::from_secs_f32(position))
             .map_err(|e| SoundboardError::Seek(e.to_string()))
@@ -464,17 +319,10 @@ impl AudioPlayer {
         match Decoder::try_from(file) {
             Ok(source) => {
                 self.current_file_path = Some(file_path.to_path_buf());
-
-                if let Some(duration) = source.total_duration() {
-                    self.duration = Some(duration.as_secs_f32());
-                } else {
-                    self.duration = None;
-                }
-
+                self.duration = source.total_duration().map(|d| d.as_secs_f32());
                 self.sink.stop();
                 self.sink.append(source);
                 self.sink.play();
-
                 Ok(())
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
@@ -501,17 +349,10 @@ impl AudioPlayer {
         match Decoder::try_from(file) {
             Ok(source) => {
                 self.current_file_path = Some(file_path.to_path_buf());
-
-                if let Some(duration) = source.total_duration() {
-                    self.duration = Some(duration.as_secs_f32());
-                } else {
-                    self.duration = None;
-                }
-
+                self.duration = source.total_duration().map(|d| d.as_secs_f32());
                 self.sink.stop();
                 self.sink.append(source);
                 self.sink.play();
-
                 Ok(())
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
@@ -556,7 +397,7 @@ impl AudioPlayer {
         self.mic_sink.stop();
     }
 
-    /// Start capturing from the selected mic and routing audio through the output mixer
+    /// Start capturing from the selected mic and routing audio through the output mixer.
     fn start_mic_passthrough(&mut self) -> Result<()> {
         self.stop_mic_passthrough();
 
@@ -590,12 +431,10 @@ impl AudioPlayer {
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
 
-        // Ring capacity = ~500ms of audio. On overflow we drop the newest
-        // sample (ringbuf 0.4 has no producer-side overwrite); the 500ms
-        // head-room means overflow only happens if the consumer is already
-        // far behind, in which case the behavior doesn't much matter.
-        // Use checked_mul to defend against pathological device reports
-        // (e.g. 192 kHz × 1024 ch overflows usize on 32-bit targets).
+        // Ring capacity ≈ 500ms. On overflow we drop the newest sample; the
+        // head-room means overflow only occurs if the consumer is far behind.
+        // checked_mul guards against pathological device reports (e.g. 192 kHz
+        // × 1024 ch overflowing usize on 32-bit).
         let max_samples = (sample_rate_hz as usize)
             .checked_mul(channels as usize)
             .and_then(|p| p.checked_div(2))
@@ -664,14 +503,12 @@ impl AudioPlayer {
         Ok(())
     }
 
-    // ============= Layer Management Methods =============
+    // ── Layer Management ──────────────────────────────────────────────────────
 
-    /// Get the number of available layers
     pub fn get_layer_count(&self) -> usize {
         self.layers.len()
     }
 
-    /// Play a sound on a specific layer
     pub async fn play_on_layer(&mut self, layer_index: usize, file_path: &Path) -> Result<()> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -702,17 +539,10 @@ impl AudioPlayer {
             Ok(source) => {
                 let layer = &mut self.layers[layer_index];
                 layer.current_file_path = Some(file_path.to_path_buf());
-
-                if let Some(duration) = source.total_duration() {
-                    layer.duration = Some(duration.as_secs_f32());
-                } else {
-                    layer.duration = None;
-                }
-
+                layer.duration = source.total_duration().map(|d| d.as_secs_f32());
                 layer.sink.stop();
                 layer.sink.append(source);
                 layer.sink.play();
-
                 Ok(())
             }
             Err(err) => Err(SoundboardError::AudioDecode(format!(
@@ -728,7 +558,6 @@ impl AudioPlayer {
         }
     }
 
-    /// Stop playback on a specific layer
     pub fn stop_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -736,14 +565,12 @@ impl AudioPlayer {
                 max: self.layers.len(),
             });
         }
-
         self.layers[layer_index].sink.stop();
         self.layers[layer_index].current_file_path = None;
         self.layers[layer_index].duration = None;
         Ok(())
     }
 
-    /// Stop all layers
     pub fn stop_all_layers(&mut self) {
         for layer in &mut self.layers {
             layer.sink.stop();
@@ -752,7 +579,6 @@ impl AudioPlayer {
         }
     }
 
-    /// Pause a specific layer
     pub fn pause_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -760,12 +586,10 @@ impl AudioPlayer {
                 max: self.layers.len(),
             });
         }
-
         self.layers[layer_index].sink.pause();
         Ok(())
     }
 
-    /// Resume a specific layer
     pub fn resume_layer(&mut self, layer_index: usize) -> Result<()> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -773,12 +597,10 @@ impl AudioPlayer {
                 max: self.layers.len(),
             });
         }
-
         self.layers[layer_index].sink.play();
         Ok(())
     }
 
-    /// Set volume for a specific layer (0.0 to 1.0)
     pub fn set_layer_volume(&mut self, layer_index: usize, volume: f32) -> Result<()> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -786,14 +608,12 @@ impl AudioPlayer {
                 max: self.layers.len(),
             });
         }
-
         let layer = &mut self.layers[layer_index];
         layer.volume = clamp_layer_volume(volume);
         layer.sink.set_volume(layer.volume * self.gain);
         Ok(())
     }
 
-    /// Get volume for a specific layer
     pub fn get_layer_volume(&self, layer_index: usize) -> Result<f32> {
         if layer_index >= self.layers.len() {
             return Err(SoundboardError::LayerOutOfRange {
@@ -801,25 +621,20 @@ impl AudioPlayer {
                 max: self.layers.len(),
             });
         }
-
         Ok(self.layers[layer_index].volume)
     }
 
-    /// Check if a layer is playing
     pub fn is_layer_playing(&self, layer_index: usize) -> bool {
         if layer_index >= self.layers.len() {
             return false;
         }
-
         self.layers[layer_index].is_playing()
     }
 
-    /// Get layer state information
     pub fn get_layer_info(&self, layer_index: usize) -> Option<LayerInfo> {
         if layer_index >= self.layers.len() {
             return None;
         }
-
         let layer = &self.layers[layer_index];
         Some(LayerInfo {
             index: layer_index,
@@ -833,7 +648,6 @@ impl AudioPlayer {
         })
     }
 
-    /// Get all layers info
     pub fn get_all_layers_info(&self) -> Vec<LayerInfo> {
         (0..self.layers.len())
             .filter_map(|i| self.get_layer_info(i))
@@ -841,101 +655,9 @@ impl AudioPlayer {
     }
 }
 
-/// Information about an audio layer
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LayerInfo {
-    pub index: usize,
-    pub is_playing: bool,
-    pub is_paused: bool,
-    pub is_empty: bool,
-    pub volume: f32,
-    pub current_file: Option<PathBuf>,
-    pub position: f32,
-    pub duration: Option<f32>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn clamp_volume_bounds() {
-        assert_eq!(clamp_volume(-1.0), 0.0);
-        assert_eq!(clamp_volume(0.0), 0.0);
-        assert_eq!(clamp_volume(0.5), 0.5);
-        assert_eq!(clamp_volume(1.0), 1.0);
-        assert_eq!(clamp_volume(2.0), 1.0);
-        assert_eq!(clamp_volume(f32::INFINITY), 1.0);
-        assert_eq!(clamp_volume(f32::NEG_INFINITY), 0.0);
-    }
-
-    #[test]
-    fn clamp_volume_nan_pins_to_low_bound() {
-        // f32::clamp returns the lower bound when given NaN, which is the
-        // safe failure mode for an audio mixer (silence beats screech).
-        assert_eq!(clamp_volume(f32::NAN), 0.0);
-    }
-
-    #[test]
-    fn clamp_gain_bounds() {
-        assert_eq!(clamp_gain(MIN_GAIN - 1.0), MIN_GAIN);
-        assert_eq!(clamp_gain(MIN_GAIN), MIN_GAIN);
-        assert_eq!(clamp_gain(1.0), 1.0);
-        assert_eq!(clamp_gain(MAX_GAIN), MAX_GAIN);
-        assert_eq!(clamp_gain(MAX_GAIN + 5.0), MAX_GAIN);
-        assert_eq!(clamp_gain(f32::INFINITY), MAX_GAIN);
-    }
-
-    #[test]
-    fn clamp_mic_gain_bounds() {
-        assert_eq!(clamp_mic_gain(0.0), MIN_MIC_GAIN);
-        assert_eq!(clamp_mic_gain(MIN_MIC_GAIN - 0.1), MIN_MIC_GAIN);
-        assert_eq!(clamp_mic_gain(MIN_MIC_GAIN), MIN_MIC_GAIN);
-        assert_eq!(clamp_mic_gain(1.0), 1.0);
-        assert_eq!(clamp_mic_gain(MAX_MIC_GAIN), MAX_MIC_GAIN);
-        assert_eq!(clamp_mic_gain(10.0), MAX_MIC_GAIN);
-    }
-
-    #[test]
-    fn clamp_layer_volume_bounds() {
-        assert_eq!(clamp_layer_volume(-0.5), 0.0);
-        assert_eq!(clamp_layer_volume(0.7), 0.7);
-        assert_eq!(clamp_layer_volume(1.5), 1.0);
-    }
-
-    #[test]
-    fn layer_info_default_is_inactive() {
-        let info = LayerInfo::default();
-        assert_eq!(info.index, 0);
-        assert!(!info.is_playing);
-        assert!(!info.is_paused);
-        assert!(!info.is_empty);
-        assert_eq!(info.volume, 0.0);
-        assert!(info.current_file.is_none());
-        assert_eq!(info.position, 0.0);
-        assert!(info.duration.is_none());
-    }
-
-    #[test]
-    fn layer_info_serde_roundtrip() {
-        let original = LayerInfo {
-            index: 2,
-            is_playing: true,
-            is_paused: false,
-            is_empty: false,
-            volume: 0.42,
-            current_file: Some(PathBuf::from("/sounds/a.mp3")),
-            position: 1.5,
-            duration: Some(3.0),
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let parsed: LayerInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.index, original.index);
-        assert!(parsed.is_playing);
-        assert_eq!(parsed.volume, 0.42);
-        assert_eq!(parsed.current_file, original.current_file);
-    }
 
     #[test]
     fn player_state_serde_round_trip() {
@@ -948,10 +670,5 @@ mod tests {
             let parsed: PlayerState = serde_json::from_str(&s).unwrap();
             assert_eq!(state, parsed);
         }
-    }
-
-    #[test]
-    fn num_audio_layers_const() {
-        assert_eq!(NUM_AUDIO_LAYERS, 4);
     }
 }

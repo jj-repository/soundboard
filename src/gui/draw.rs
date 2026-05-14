@@ -1310,15 +1310,14 @@ impl SoundpadGui {
                             let mut drop_target_index: Option<usize> = None;
 
                             for (sound_index, entry_path) in files.iter().enumerate() {
-                                let file_name = entry_path
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy())
-                                    .unwrap_or_default();
-
-                                if !search_query.is_empty()
-                                    && !file_name.to_lowercase().contains(search_query)
-                                {
-                                    continue;
+                                if !search_query.is_empty() {
+                                    let file_name = entry_path
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy())
+                                        .unwrap_or_default();
+                                    if !file_name.to_ascii_lowercase().contains(search_query) {
+                                        continue;
+                                    }
                                 }
 
                                 // Filter by tag if set
@@ -1391,9 +1390,10 @@ impl SoundpadGui {
                                 }
                             }
                         }
-                    } else if let Some(ref cat_name) = self.app_state.current_category.clone() {
+                    } else if let Some(cat_name) = self.app_state.current_category.as_deref() {
                         // Draw category contents (legacy support)
-                        if let Some(category) = self.config.categories.get(cat_name) {
+                        let cat_name = cat_name.to_owned();
+                        if let Some(category) = self.config.categories.get(&cat_name) {
                             let sounds = category.sounds.clone();
                             let search_query = self.app_state.search_query.to_lowercase();
                             let search_query = search_query.trim();
@@ -1407,32 +1407,33 @@ impl SoundpadGui {
                                 );
                             } else {
                                 for entry_path in &sounds {
-                                    let file_name = entry_path
-                                        .file_name()
-                                        .map(|n| n.to_string_lossy())
-                                        .unwrap_or_default();
-
-                                    if !search_query.is_empty()
-                                        && !file_name.to_lowercase().contains(search_query)
-                                    {
-                                        continue;
+                                    if !search_query.is_empty() {
+                                        let file_name = entry_path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy())
+                                            .unwrap_or_default();
+                                        if !file_name.to_ascii_lowercase().contains(search_query) {
+                                            continue;
+                                        }
                                     }
-
-                                    self.draw_category_file_row(ui, entry_path, cat_name);
+                                    self.draw_category_file_row(ui, entry_path, &cat_name);
                                 }
                             }
                         }
                     } else {
-                        // Draw regular directory contents
-                        let mut files: Vec<_> = self.app_state.files.iter().cloned().collect();
-                        files.sort();
+                        // Draw regular directory contents — use sorted cache (invalidated on file changes)
+                        if self.app_state.sorted_files_cache.is_none() {
+                            let mut f: Vec<_> = self.app_state.files.iter().cloned().collect();
+                            f.sort();
+                            self.app_state.sorted_files_cache = Some(f);
+                        }
+                        let files = self.app_state.sorted_files_cache.as_ref().unwrap();
 
                         let search_query = self.app_state.search_query.to_lowercase();
                         let search_query = search_query.trim();
 
-                        // Filter once; both list and grid renderers consume the
-                        // same filtered set.
-                        let tag_filter = self.app_state.filter_by_tag.clone();
+                        // Filter once; both list and grid renderers consume the same filtered set.
+                        let tag_filter = self.app_state.filter_by_tag.as_deref();
                         let filtered: Vec<_> = files
                             .iter()
                             .filter(|p| !p.is_dir())
@@ -1440,18 +1441,24 @@ impl SoundpadGui {
                                 p.extension()
                                     .and_then(|e| e.to_str())
                                     .map(|e| {
-                                        SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str())
+                                        SUPPORTED_EXTENSIONS
+                                            .iter()
+                                            .any(|&ext| ext.eq_ignore_ascii_case(e))
                                     })
                                     .unwrap_or(false)
                             })
                             .filter(|p| {
-                                p.file_name()
-                                    .map(|n| n.to_string_lossy().to_lowercase())
-                                    .map(|n| n.contains(search_query))
-                                    .unwrap_or(false)
+                                search_query.is_empty()
+                                    || p.file_name()
+                                        .map(|n| {
+                                            n.to_string_lossy()
+                                                .to_ascii_lowercase()
+                                                .contains(search_query)
+                                        })
+                                        .unwrap_or(false)
                             })
                             .filter(|p| {
-                                tag_filter.as_ref().is_none_or(|t| {
+                                tag_filter.is_none_or(|t| {
                                     self.config
                                         .sound_metadata
                                         .get(*p)

@@ -1,0 +1,59 @@
+[graph]
+# Windows-only binary — skip Linux/macOS/WASM platform crates from checks.
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",   # webpki-roots
+    "ISC",
+    "MPL-2.0",               # symphonia family
+    "OFL-1.1",               # epaint_default_fonts
+    "Ubuntu-font-1.0",       # epaint_default_fonts
+    "Unicode-3.0",           # icu_* family
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+]
+confidence-threshold = 0.8
+
+# ring uses a non-SPDX composite license; point at the canonical hash.
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Warn on duplicate versions — the egui/wgpu ecosystem pulls many; don't block CI.
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+# Deny known-insecure or deprecated crates that must not appear.
+deny = [
+    { crate = "openssl", reason = "use rustls (already the case)" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
