@@ -24,33 +24,33 @@ rodio = { version = "0.22.2", default-features = false, features = ["symphonia-a
 rfd = "0.17.2"
 
 egui = { version = "0.34.1", default-features = false, features = ["default_fonts", "rayon"] }
-eframe = { version = "0.34.1", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
-egui_material_icons = "0.6.0"
+eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
+egui_material_icons = "0.7.0"
 
 image = { version = "0.25", default-features = false, features = ["png"] }
-global-hotkey = "0.7"
+global-hotkey = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 semver = "1.0"
-sha2 = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.11"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 futures-util = "0.3"
 open = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "1"
+thiserror = "2"
 
-tray-icon = { version = "0.23", default-features = false }
+tray-icon = { version = "0.24", default-features = false }
 muda = { version = "0.19", default-features = false, features = ["common-controls-v6"] }
 windows = { version = "0.62", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
 # MIDI input (note-on events) and gamepad input (button-press events) for
 # alternate hotkey bindings beyond keyboard/global hotkeys.
-midir = "0.10"
+midir = "0.11"
 gilrs = "0.11"
 # WAV writer for the toggle-recorder (mic + system-loopback capture).
 hound = "3"
 # Lock-free SPSC ring buffer for mic passthrough. Avoids locking the audio
 # callback against the playback thread at 48 kHz.
-ringbuf = "0.4"
+ringbuf = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
